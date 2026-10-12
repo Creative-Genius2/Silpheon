@@ -4,32 +4,44 @@ Inherits Kanto_lgpe. Gen VIII: Dynamax, Wild Area, 400 base dex.
 First Switch game with standard battle mechanics restored.
 DLC: Isle of Armor, Crown Tundra (expand species count + encounter tables).
 """
-from Generations.Kanto_lgpe import Kanto_lgpe
+from Kanto_lgpe import Kanto_lgpe
 
 import struct
-from leswitch import fb_field, fb_root, fb_table, fb_vector
+from leswitch import fb_field, fb_root, fb_table, fb_vector, _vt_off, unpack_gfpak, _fnv1a_64
 
 
 class Galar_swsh(Kanto_lgpe):
     """Sword / Shield."""
 
-    GAME_CODES = ('SW1', 'SH1')
-    TITLES = ('POKÉMON SWORD', 'POKÉMON SHIELD')
+    GAME_CODES = ('SW1', 'SW1', 'SW1', 'SW1', 'SH1', 'SH1', 'SH1', 'SH1')
+    TITLE_IDS = (0x0100ABF008968000, 0x0100ABF008968800, 0x0100ABF008969001, 0x0100ABF008969002,
+                 0x01008DB008C2C000, 0x01008DB008C2C800, 0x01008DB008C2D001, 0x01008DB008C2D002)
+    TITLES = ('Pokémon Sword', 'Pokémon Sword: Version 1.3.2', 'Pokémon Sword: Download Key for Part 1 of Version 1.3.2', 'Pokémon Sword: Download Key for Part 2 of Version 1.3.2',
+              'Pokémon Shield', 'Pokémon Shield: Version 1.3.2', 'Pokémon Shield: Download Key for Part 1 of Version 1.3.2', 'Pokémon Shield: Download Key for Part 2 of Version 1.3.2')
     YEAR = 2019
 
     GEN = 8
     SPECIES_COUNT = 898
 
+    EVO_CRITICAL_HITS = 43
+    EVO_HP_LOST = 44
+    EVO_SPIN = 45
+    EVO_NATURE_AMPED = 46
+    EVO_NATURE_LOW_KEY = 47
+    EVO_TOWER_DARKNESS = 48
+    EVO_TOWER_WATERS = 49
+
     # -- Paths (from pkNX GameFileMapping.cs) --
     PERSONAL_PATH = 'bin/pml/personal'
     LEARNSET_PATH = 'bin/pml/waza_oboe/wazaoboe_total.bin'
+    learnset_moves = None  # single-file table, not LGPE's gfpak — not implemented yet
     EVOLUTION_PATH = 'bin/pml/evolution'
     MOVE_DATA_PATH = 'bin/pml/waza'
     ITEM_PATH = 'bin/pml/item/item.dat'
     EGG_MOVES_PATH = 'bin/pml/tamagowaza'
     TEXT_PATH = 'bin/message/English/common'
     TEXT_SCRIPT_PATH = 'bin/message/English/script'
-    TRDATA_PATH = 'bin/trainer/trainer_data'
+    TRAINER_PATH = 'bin/trainer/trainer_data'
     TRPOKE_PATH = 'bin/trainer/trainer_poke'
     TRAINER_CLASS_PATH = 'bin/trainer/trainer_type'
 
@@ -49,6 +61,51 @@ class Galar_swsh(Kanto_lgpe):
     NEST_DATA_PATH = 'bin/archive/field/resident/data_table.gfpak'
     SHOP_PATH = 'bin/appli/shop/bin/shop_data.bin'
     SYMBOL_BEHAVE_PATH = 'bin/field/param/symbol_encount_mons_param/symbol_encount_mons_param.bin'
+
+    # Null out inherited paths that don't exist in SwSh
+    def iter_encounters(self):
+        try:
+            raw = self.switch_rom.read_file(self.WILD_AREA_PATH)
+        except Exception:
+            return
+        pack = unpack_gfpak(raw)
+        for suffix in ('k', 't'):
+            if {'k': 'Shield', 't': 'Sword'}[suffix] in self.header['game_title']: continue  # k = Sword, t = Shield (pkNX GameDumperSWSH)
+            for prefix in ('encount_', 'encount_symbol_'):
+                fname = f'{prefix}{suffix}.bin'
+                data = pack.get(_fnv1a_64(fname))
+                if not data: continue
+                root = fb_root(data)
+                vt, to = fb_table(data, root)
+                vo = _vt_off(vt, 1)
+                if not vo: continue
+                tc, td = fb_vector(data, to, vo)
+                for t in range(tc):
+                    trel = struct.unpack_from('<I', data, td + t * 4)[0]
+                    tv, tt = fb_table(data, td + t * 4 + trel)
+                    stvo = _vt_off(tv, 1)
+                    if not stvo: continue
+                    stc, std = fb_vector(data, tt, stvo)
+                    for st in range(stc):
+                        strel = struct.unpack_from('<I', data, std + st * 4)[0]
+                        stv, stt = fb_table(data, std + st * 4 + strel)
+                        minlv = fb_field(data, stv, stt, 0, '<B') or 0
+                        maxlv = fb_field(data, stv, stt, 1, '<B') or 0
+                        slvo = _vt_off(stv, 2)
+                        if not slvo: continue
+                        sc, sd = fb_vector(data, stt, slvo)
+                        for s in range(sc):
+                            srel2 = struct.unpack_from('<I', data, sd + s * 4)[0]
+                            ssv, sst = fb_table(data, sd + s * 4 + srel2)
+                            species = fb_field(data, ssv, sst, 1, '<i') or 0
+                            form = fb_field(data, ssv, sst, 2, '<B') or 0
+                            if species:
+                                yield (fname, species, form, minlv, maxlv)
+
+
+    MEGA_EVO_PATH = None
+    WILD_PATH_E = None
+    WILD_PATH_P = None
 
     # -- Container formats --
     LEARNSET_CONTAINER = 'single'
@@ -377,86 +434,126 @@ class Galar_swsh(Kanto_lgpe):
 
     # ── decode_trainer ──────────────────────────────────────────────
     def decode_trainer(self, data, file_idx, text_tables):
-        """Decode SWSH trainer (binary structs: TrainerData8 0x14 + TrainerPoke8 0x20)."""
+        """Decode SWSH trainer (TrainerData8 0x14 bytes + fetches TrainerPoke8).
+        Layout from pkNX TrainerData8.cs: Class(u16 0x00), Mode(0x02),
+        NumPoke(0x03), Items(4xu16 0x04), AI(u32 0x0C), Heal(0x10),
+        Money(0x11), Gift(u16 0x12)."""
         if len(data) < 0x14:
             return None
 
-        species_list = text_tables.get('species', [])
-        moves_list = text_tables.get('moves', [])
-        item_list = text_tables.get('items', [])
         class_list = text_tables.get('trainer_classes', [])
         name_list = text_tables.get('trainer_names', [])
+        item_list = text_tables.get('items', [])
 
-        # TrainerData8: Mode(0 u8), NumPokemon(1 u8), Item1-4(u16 x4 at 2-9),
-        # AI(u32 at 0x0C), Heal(bool at 0x10), Money(u8 at 0x11), Gift(u16 at 0x12)
-        mode = data[0]
-        num_poke = data[1]
-        items_used = []
-        for i in range(4):
-            iid = struct.unpack_from('<H', data, 2 + i * 2)[0]
-            if iid:
-                items_used.append(item_list[iid] if iid < len(item_list) else f"item#{iid}")
+        tr_class = struct.unpack_from('<H', data, 0x00)[0]
+        battle_mode = data[0x02]
+        num_pokemon = data[0x03]
+        items = [struct.unpack_from('<H', data, 0x04 + i*2)[0] for i in range(4)]
         ai = struct.unpack_from('<I', data, 0x0C)[0]
         heal = bool(data[0x10])
         money = data[0x11]
         gift = struct.unpack_from('<H', data, 0x12)[0]
 
-        battle_type = self.BATTLE_TYPES[mode] if mode < len(self.BATTLE_TYPES) else f"mode#{mode}"
+        class_name = class_list[tr_class] if tr_class < len(class_list) else f'class#{tr_class}'
+        tr_name = name_list[file_idx] if file_idx < len(name_list) else f'#{file_idx}'
 
-        class_name = class_list[file_idx] if file_idx < len(class_list) else f"class#{file_idx}"
-        trainer_name = name_list[file_idx] if file_idx < len(name_list) else f"Trainer #{file_idx}"
+        out = [f'{class_name} {tr_name} (#{file_idx})']
+        out.append('')
 
-        out = [f"{class_name} {trainer_name}"]
-        if battle_type != 'Single': out[0] += f"  [{battle_type} Battle]"
-        if heal: out.append("Will heal during battle")
+        # Fetch trpoke
+        highest_level = 0
+        trpoke_path = getattr(self, 'TRPOKE_PATH', None)
+        if trpoke_path:
+            trpoke_data = self.read_file(f"{trpoke_path}:{file_idx}")
+            if trpoke_data:
+                team = self.decode_trpoke(trpoke_data, file_idx, text_tables)
+                if team and team.get('pokemon'):
+                    out.append('Team:')
+                    for pk in team['pokemon']:
+                        lv = pk['level']
+                        if lv > highest_level:
+                            highest_level = lv
+                        gender = f" {pk['gender']}" if pk.get('gender') else ''
+                        held_str = f"  [{pk['held_item']}]" if pk.get('held_item') else ''
+                        out.append(f"{pk['species']}{gender} (Lv. {lv}){held_str}")
+                        if pk.get('nature'):
+                            out.append(f"  {pk['nature']} Nature")
+                        if pk.get('moves'):
+                            out.append(f"  {' / '.join(pk['moves'])}")
+                        tags = []
+                        if pk.get('can_gmax'): tags.append('Gigantamax')
+                        if pk.get('dmax_lv'): tags.append(f"Dynamax Lv.{pk['dmax_lv']}")
+                        if pk.get('shiny'): tags.append('Shiny')
+                        if tags:
+                            out.append(f"  {' | '.join(tags)}")
+                        out.append('')
 
-        # TrainerPoke8 entries follow at 0x14, each 0x20 bytes
-        poke_offset = 0x14
-        for pi in range(num_poke):
-            base = poke_offset + pi * 0x20
-            if base + 0x20 > len(data):
-                break
-            # TrainerPoke8 fields (from extract):
-            # Nature(0 u8?), EV_HP-SPE(bytes), DynamaxLevel(byte), CanGigantamax(bool),
-            # ... Level, Species, Form, HeldItem, Move1-4 are packed in the struct
-            # Binary layout needs verification against actual data, using IMove field order:
-            iv32 = struct.unpack_from('<I', data, base)[0]
-            iv_val = (iv32 >> 0) & 0x1F  # HP IV as representative
-            level = struct.unpack_from('<H', data, base + 0x04)[0]
-            species = struct.unpack_from('<H', data, base + 0x06)[0]
-            form = struct.unpack_from('<H', data, base + 0x08)[0]
-            held = struct.unpack_from('<H', data, base + 0x0A)[0]
-            moves = [struct.unpack_from('<H', data, base + 0x0C + i * 2)[0] for i in range(4)]
-            nature = data[base + 0x14]
-            dmax_lv = data[base + 0x1C]
-            can_gmax = bool(data[base + 0x1D])
-            shiny = bool(data[base + 0x1E])
-
-            sp_name = species_list[species] if species < len(species_list) else f"#{species}"
-            form_str = f"-{form}" if form else ""
-            header = f"{sp_name}{form_str} (Lv. {level})"
-            if held:
-                iname = item_list[held] if held < len(item_list) else f"item#{held}"
-                header += f"  [{iname}]"
-            out.append(header)
-            move_names = []
-            for mid in moves:
-                if mid: move_names.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
-            if move_names: out.append(f"  {' / '.join(move_names)}")
-            if can_gmax: out.append("  Can Gigantamax")
-            if dmax_lv: out.append(f"  Dynamax Lv: {dmax_lv}")
-            if shiny: out.append("  Shiny")
-
-        footer = []
-        if money: footer.append(f"Prize: x{money}")
-        if items_used: footer.append(f"Items: {', '.join(items_used)}")
+        # Footer
+        mode_str = {0: 'Single', 1: 'Double', 2: 'Multi'}.get(battle_mode, f'mode#{battle_mode}')
+        footer = [f'{mode_str} Battle']
+        if money and highest_level: footer.append(f'Prize: \u00a5{money * 4 * highest_level:,}')
+        held = [item_list[i] if i and i < len(item_list) else None for i in items]
+        held = [h for h in held if h]
+        if held: footer.append(f'Items: {", ".join(held)}')
         ai_flags = self.decode_ai_flags(ai)
-        if ai_flags and ai_flags != ['None']: footer.append(f"AI: {', '.join(ai_flags)}")
-        if footer:
-            out.append("")
-            out.append(" | ".join(footer))
+        if ai_flags: footer.append(f'AI: {ai_flags}')
+        if heal: footer.append('Heals')
+        if gift:
+            gname = item_list[gift] if gift < len(item_list) else f'item#{gift}'
+            footer.append(f'Gift: {gname}')
+        out.append(' | '.join(footer))
 
-        return "\n".join(out)
+        return '\n'.join(out)
+
+    # ── decode_trpoke ──────────────────────────────────────────────
+    def decode_trpoke(self, data, file_idx, text_tables):
+        """Decode SWSH trainer pokemon (TrainerPoke8, 0x20 bytes per entry).
+        Layout from pkNX TrainerPoke8.cs: Gender+Ability(0x00), Nature(0x01),
+        EVs(0x02-07), DynamaxLv(0x08), Gigantamax(0x09), Level(u16 0x0A),
+        Species(u16 0x0C), Form(u16 0x0E), HeldItem(u16 0x10),
+        Moves(4xu16 0x12), pad(0x1A-1B), IV32(u32 0x1C)."""
+        if len(data) < 0x20:
+            return None
+
+        species_list = text_tables.get('species', [])
+        moves_list = text_tables.get('moves', [])
+        item_list = text_tables.get('items', [])
+        nature_list = text_tables.get('natures', [])
+
+        entry_size = 0x20
+        count = len(data) // entry_size
+        pokemon = []
+
+        for i in range(count):
+            e = i * entry_size
+            gender = data[e] & 0x3
+            nature = data[e + 1]
+            dmax_lv = data[e + 0x08]
+            can_gmax = bool(data[e + 0x09])
+
+            level = struct.unpack_from('<H', data, e + 0x0A)[0]
+            species = struct.unpack_from('<H', data, e + 0x0C)[0]
+            form = struct.unpack_from('<H', data, e + 0x0E)[0]
+            held_item = struct.unpack_from('<H', data, e + 0x10)[0]
+            moves = [struct.unpack_from('<H', data, e + 0x12 + j*2)[0] for j in range(4)]
+
+            iv32 = struct.unpack_from('<I', data, e + 0x1C)[0]
+            shiny = bool((iv32 >> 30) & 1)
+
+            sp_name = species_list[species] if species < len(species_list) else f'#{species}'
+            if form: sp_name += f'-{form}'
+            gender_str = {0: '', 1: '\u2642', 2: '\u2640'}.get(gender, '')
+            item_name = item_list[held_item] if held_item and held_item < len(item_list) else ''
+            nat_name = nature_list[nature] if nature_list and nature < len(nature_list) else ''
+            move_names = [moves_list[m] if m < len(moves_list) else f'move#{m}' for m in moves if m]
+
+            pokemon.append({
+                "species": sp_name, "level": level, "gender": gender_str,
+                "held_item": item_name, "nature": nat_name, "moves": move_names,
+                "shiny": shiny, "dmax_lv": dmax_lv, "can_gmax": can_gmax,
+            })
+
+        return {"pokemon": pokemon}
 
     # ── decode_item ─────────────────────────────────────────────────
     def decode_item(self, data, file_idx, text_tables, path='', **kwargs):

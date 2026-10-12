@@ -4,14 +4,14 @@ Inherits Sinnoh_pt (built on Platinum engine). Different a/x/x/x paths,
 HGSS encounter format, Pokeathlon performance data.
 """
 import struct
-from Generations.Sinnoh_pt import Sinnoh_pt
+from Sinnoh_pt import Sinnoh_pt
 
 
 class Johto_remake(Sinnoh_pt):
     """HeartGold/SoulSilver. Inherits Platinum engine, HGSS paths."""
 
     GAME_CODES = ('IPK', 'IPG')
-    TITLES = ('POKÉMON HEARTGOLD', 'POKÉMON SOULSILVER')
+    TITLES = ('Pokémon HeartGold', 'Pokémon SoulSilver')
     YEAR = 2010
 
     TEXT_PATH = 'a/0/2/7'
@@ -19,7 +19,7 @@ class Johto_remake(Sinnoh_pt):
     LEARNSET_PATH = 'a/0/3/3'
     EVOLUTION_PATH = 'a/0/3/4'
     MOVE_DATA_PATH = 'a/0/1/1'
-    TRDATA_PATH = 'a/0/5/5'
+    TRAINER_PATH = 'a/0/5/5'
     TRPOKE_PATH = 'a/0/5/6'
     ENCOUNTER_PATH = 'a/1/3/6'
     BATTLE_TOWER_POKEMON_PATH = 'a/2/0/3'
@@ -27,103 +27,38 @@ class Johto_remake(Sinnoh_pt):
     ITEM_PATH = 'a/0/1/7'
     POKEATHLON_PATH = 'a/1/6/9'
 
-    TEXT_SPECIES = 237
-    TEXT_MOVES = 750
-    TEXT_ITEMS = 222
-    TEXT_ABILITIES = 720
-    TEXT_TYPE_NAMES = 735
-    TEXT_NATURES = 34
-    TEXT_TRAINER_CLASSES = 730
-    TEXT_TRAINER_NAMES = 729
-    TEXT_LOCATIONS = 279
 
 
-    @staticmethod
-    def decode_encounters(self, data: bytes) -> dict:
-        """Decode Gen IV HGSS encounter data (196 bytes).
-        Header: 8 × u8 rates. Grass: 12 levels + 3×12 species (morn/day/night) + 4 sound species.
-        Water: surf(5) + rocksmash(2) + oldrod(5) + goodrod(5) + superrod(5), each 4B/slot."""
-        if len(data) != 196:
-            return None
 
-        # Header rates (u8 each)
-        grass_rate = data[0]
-        surf_rate = data[1]
-        rock_smash_rate = data[2]
-        old_rod_rate = data[3]
-        good_rod_rate = data[4]
-        super_rod_rate = data[5]
+    MAP_HEADER_WILD = (0, '<B', 0xFF)
+    MAP_HEADER_MUSIC = 12
 
-        result = {}
-
-        # Grass: 12 levels at offset 8, then 3 species tables (morning/day/night)
-        if grass_rate > 0:
-            levels = [data[8 + i] for i in range(12)]
-            tables = {}
-            for t_idx, t_name in enumerate(["morning", "day", "night"]):
-                base = 20 + t_idx * 24  # 12 species × 2 bytes = 24
-                species = []
-                for i in range(12):
-                    sid = struct.unpack_from("<H", data, base + i * 2)[0]
-                    if sid == 0:
-                        continue
-                    species.append({"species": get_text("species", sid), "level": levels[i]})
-                if species:
-                    tables[t_name] = species
-            if tables:
-                result["grass"] = tables
-                result["grass_rate"] = grass_rate
-
-        # Sound species at offset 92 (Hoenn Sound × 2, Sinnoh Sound × 2)
-        sound_species = []
-        for i in range(4):
-            sid = struct.unpack_from("<H", data, 92 + i * 2)[0]
-            if sid > 0:
-                sound_species.append(get_text("species", sid))
-        if sound_species:
-            result["sound"] = {"hoenn": sound_species[:2], "sinnoh": sound_species[2:]}
-
-        # Water helper: each slot is min_lv u8, max_lv u8, species u16 (4 bytes)
-        def read_water(offset, count):
-            entries = []
-            for i in range(count):
-                pos = offset + i * 4
-                min_lv = data[pos]
-                max_lv = data[pos + 1]
-                species_id = struct.unpack_from("<H", data, pos + 2)[0]
-                if species_id == 0:
-                    continue
-                lvl = f"{min_lv}-{max_lv}" if min_lv != max_lv else str(min_lv)
-                entries.append({"species": get_text("species", species_id), "level": lvl})
-            return entries
-
-        if surf_rate > 0:
-            surf = read_water(100, 5)
-            if surf:
-                result["surf"] = surf
-
-        if rock_smash_rate > 0:
-            rocks = read_water(120, 2)
-            if rocks:
-                result["rock_smash"] = rocks
-
-        if old_rod_rate > 0:
-            old = read_water(128, 5)
-            if old:
-                result["old_rod"] = old
-
-        if good_rod_rate > 0:
-            good = read_water(148, 5)
-            if good:
-                result["good_rod"] = good
-
-        if super_rod_rate > 0:
-            sup = read_water(168, 5)
-            if sup:
-                result["super_rod"] = sup
-
-        return result if result else None
-
+    def decode_encounters(self, data, file_idx=0, text_tables=None, **kwargs):
+        import struct as st
+        if len(data) != 196: return []
+        locs = (text_tables or self.text_tables).get('location_names', [])
+        li = self._enc_locations().get(file_idx)
+        loc = locs[li] if li is not None and li < len(locs) else f'Zone {file_idx}'
+        out = []
+        def add(label, raw, lo, hi, **fields):
+            if raw: out.append((f'{loc} {label}', raw & 0x7FF, raw >> 11, lo, hi, {'location': loc, **fields}))
+        if data[0]:
+            lv = data[8:20]
+            for tod, off in (('Morning', 0x14), ('Day', 0x2C), ('Night', 0x44)):
+                for i in range(12): add(f'Grass ({tod})', st.unpack_from('<H', data, off + i*2)[0], lv[i], lv[i], method='Grass', period=tod)
+            for k, radio in enumerate(('Hoenn Sound', 'Hoenn Sound', 'Sinnoh Sound', 'Sinnoh Sound')):
+                add(f'Grass ({radio})', st.unpack_from('<H', data, 0x5C + k*2)[0], lv[2 + k % 2], lv[2 + k % 2], method='Grass', variant=radio)
+        for area, off, n, ri in (('Surf', 0x64, 5, 1), ('Rock Smash', 0x78, 2, 2), ('Old Rod', 0x80, 5, 3), ('Good Rod', 0x94, 5, 4), ('Super Rod', 0xA8, 5, 5)):
+            if data[ri]:
+                for i in range(n):
+                    mn, mx, sp = st.unpack_from('<BBH', data, off + i*4)
+                    add(area, sp, mn, mx, method=area)
+        seen = {t[1] for t in out}
+        for k, (area, sec) in enumerate((('Grass (Swarm)', 'Grass'), ('Surf (Swarm)', 'Surf'), ('Good Rod (Swarm)', 'Good Rod'), ('Super Rod (Swarm)', 'Super Rod'))):
+            raw = st.unpack_from('<H', data, 0xBC + k*2)[0]
+            lvs = [t[3] for t in out if t[0].startswith(f'{loc} {sec}')] + [t[4] for t in out if t[0].startswith(f'{loc} {sec}')]
+            if raw and (raw & 0x7FF) not in seen and lvs: add(area, raw, min(lvs), max(lvs), method=sec, variant='Swarm')
+        return out
     POKEATHLON_STATS = ['Power', 'Speed', 'Jump', 'Stamina', 'Skill']
 
     # sPokeathlonPerformanceArcIdxs[] — species→NARC index mapping.
@@ -180,7 +115,6 @@ class Johto_remake(Sinnoh_pt):
     POKEATHLON_FORM_MAP = _build_pokeathlon_form_map()
 
 
-    @staticmethod
     def decode_pokeathlon(self, data: bytes, text_tables: dict, file_idx: int = 0):
         """Decode Pokéathlon performance stats (HGSS only). Returns positional text."""
         if len(data) != 20:

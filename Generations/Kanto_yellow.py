@@ -3,7 +3,7 @@
 Inherits Kanto_rbg. Structurally identical to Red/Blue/Green.
 Separate file because game codes differ.
 """
-from Generations.Kanto_rbg import Kanto_rbg
+from Kanto_rbg import Kanto_rbg
 
 
 class Kanto_yellow(Kanto_rbg):
@@ -12,3 +12,4 @@ class Kanto_yellow(Kanto_rbg):
     GAME_CODES = ('PMY', 'PMYJ')
     TITLES = ('POKÉMON YELLOW', 'POCKET MONSTERS YELLOW')
     YEAR = 1999
+    ENC_ANCHOR_LEVELS = (2, 7)  # Yellow's Route 1 runs Lv 2-7 (Red/Blue: 2-5)

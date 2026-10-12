@@ -5,34 +5,166 @@ Second Legends title. Mega Evolution returns.
 DLC: Mega Dimension (donuts, hyperspace, pocket dimensions).
 """
 import struct
-from Generations.Paldea_sv import Paldea_sv
-from leswitch import fb_field, fb_root, fb_string, fb_table, fb_vector
+from Paldea_sv import Paldea_sv
+from leswitch import fb_field, fb_root, fb_string, fb_table, fb_vector, fb_str, fb_sub, fb_struct, fb_vec, fb_scalars, _vt_off
 
 
 class Kalos_sequel(Paldea_sv):
     """Legends: Z-A."""
 
-    GAME_CODES = ('LZA',)
-    TITLES = ('POKÉMON LEGENDS: Z-A',)
+    GAME_CODES = ('LZA', 'LZA', 'LZA')
+    TITLE_IDS = (0x0100F43008C44000, 0x0100F43008C44800, 0x0100F43008C45002)
+    TITLES = ('Pokémon Legends: Z-A', 'Pokémon Legends: Z-A: Version 2.0.2', 'Pokémon Legends: Z-A: Download Key for Version 2.0.2')
     YEAR = 2025
 
+
     SPECIES_COUNT = 1025  # DevID enum max
+
+    EVO_USE_MOVE_BARB_BARRAGE = 62
+    PERSONAL_FIELD_SHIFT = -2  # KitakamiDex/BlueberryDex removed from schema
 
     CONTAINER = 'trinity'
     TRINITY_DATA_PATH = 'arc/data.trpfs'
     TRINITY_DIR_PATH = 'arc/data.trpfd'
 
-    MEGA_EVO_PATH = 'bin/pml/mega_evolution'
+    TEXT_PATH = 'arc/ik_messagedatEnglishcommon'
+    MEGA_EVO_PATH = 'world/exl/pokemon/megaevo_data/megaevo_data.bin'
+
+    # Z-A: first game with LATAM Spanish (11 languages)
+    LANGUAGES = ('ja', 'ja-kanji', 'en', 'fr', 'it', 'de', 'es', 'ko', 'zh-Hans', 'zh-Hant', 'es-419')
+    LANG_FOLDERS = {
+        **Paldea_sv.LANG_FOLDERS,
+        'es-419': 'LATAM',
+    }
 
     # Z-A paths (override SV where they moved)
     PERSONAL_PATH = 'avalon/data/personal_array.bin'
     MOVE_DATA_PATH = 'avalon/data/waza_array.bin'
-    ENCOUNTER_PATH = 'world/ik_data/field/pokemon/encount_data'
-    TRDATA_PATH = 'world/ik_data/trainer/trdata'
-    ITEM_PATH = 'world/exl/item_data/item_data'
+    ENCOUNTER_PATH = 'world/ik_data/field/pokemon/encount_data/encount_data/encount_data_array.bin'
+    TRAINER_PATH = 'world/ik_data/trainer/trdata/trdata_array.bin'
+    ITEM_PATH = 'world/exl/item_data/item_data/item_data.bin'
+    SHOP_PATH = 'world/exl/shop/shop_item_lineup/shop_item_lineup.bin'
+    HOLOGRAM_SHOP_PATH = 'world/exl/hologram/hud_shopping/hud_shopping.bin'
+
+    # Null out inherited paths that don't exist in Z-A
+    SHOP_LINEUP_PATH = None
+    SHOP_MASTER_PATH = None
+    TM_SHOP_PATH = None
+    DRESSUP_SHOP_PATH = None
+    DRESSUP_CATEGORY_PATH = None
+    DRESSUP_ITEM_PATH = None
+    RESTAURANT_SHOP_PATH = None
+    RESTAURANT_MENU_PATH = None
+    RESTAURANT_BUF_PATH = None
+    DLC_ITEM_PATH = None
+    KITAKAMI_RAID_01 = None
+    KITAKAMI_RAID_02 = None
+    KITAKAMI_RAID_03 = None
+    KITAKAMI_RAID_04 = None
+    KITAKAMI_RAID_05 = None
+    KITAKAMI_RAID_06 = None
+    BLUEBERRY_RAID_01 = None
+    BLUEBERRY_RAID_02 = None
+    BLUEBERRY_RAID_03 = None
+    BLUEBERRY_RAID_04 = None
+    BLUEBERRY_RAID_05 = None
+    BLUEBERRY_RAID_06 = None
+    KITAKAMI_DEST_PATH = None
+    BLUEBERRY_DEST_PATH = None
+    KITAKAMI_PLACES_PATH = None
+    BLUEBERRY_PLACES_PATH = None
+    KITAKAMI_DEX_BLACKLIST = None
+    BLUEBERRY_DEX_BLACKLIST = None
+    KITAKAMI_DEX_DISTRIB = None
+    BLUEBERRY_DEX_DISTRIB = None
+    KITAKAMI_DEX_MEMO = None
+    BLUEBERRY_DEX_MEMO = None
+    KITAKAMI_DEX_REWARD = None
+    BLUEBERRY_DEX_REWARD = None
+    RAID_PATH = None
+    FOOD_BUF_PATH = None
+    FOOD_RECIPE_PATH = None
+    OUTBREAK_PATH = None
+    MOVE_SHOP_PATH = None
+    GINKGO_ITEM_PATH = None
+    GINKGO_TABLE_PATH = None
+    MEGA_EVO_PATH = None
+    TRADE_PATH = None
+    GIFT_PATH = None
+    WILD_PATH_E = None
+    WILD_PATH_P = None
+    TEXT_SCRIPT_PATH = None
+    LEARNSET_PATH = None
+    EVOLUTION_PATH = None
+    BATTLE_DROPS_PATH = None
+    FIELD_DROPS_PATH = None
+    CRAFT_PATH = None
+    DEX_RESEARCH_PATH = None
+    NEW_OUTBREAK_GROUP_PATH = None
+    NEW_OUTBREAK_LOTTERY_PATH = None
+    POKE_MISC_PATH = None
+    SHINY_ROLLS_PATH = None
+    THROWABLE_PARAM_PATH = None
+    THROW_PARAM_PATH = None
     DONUT_PATH = 'world/exl/donut'
     DIM_PATH = 'world/ik_data/field/dimension'
-    ZA_ROYALE_PATH = 'world/ik_data/capture'
+    DONUT_FILES = (
+        'world/exl/donut/berry/berry.bin',
+        'world/exl/donut/donut/donut.bin',
+        'world/exl/donut/donut_recipe/donut_recipe.bin',
+        'world/exl/donut/flavor/flavor.bin',
+        'world/exl/donut/flavor_lottery/flavor_lottery.bin',
+        'world/exl/donut/flavor_parameter/flavor_parameter.bin',
+        'world/exl/donut/oneword/oneword.bin',
+    )
+    DIM_FILES = (
+        'world/ik_data/field/dimension/dimension_boss_lottery/dimension_boss_lottery/dimension_boss_lottery_array.bin',
+        'world/ik_data/field/dimension/dimension_config/dimension_config/dimension_config.bin',
+        'world/ik_data/field/dimension/dimension_gate_object/dimension_gate_object/dimension_gate_object_array.bin',
+        'world/ik_data/field/dimension/dimension_gate_spawner/dimension_gate_spawner/dimension_gate_spawner_array.bin',
+        'world/ik_data/field/dimension/dimension_gimmick_item/dimension_gimmick_item/dimension_gimmick_item_array.bin',
+        'world/ik_data/field/dimension/dimension_map/dimension_map/dimension_map_array.bin',
+        'world/ik_data/field/dimension/dimension_progress/dimension_progress/dimension_progress_array.bin',
+        'world/ik_data/field/dimension/dimension_rank/dimension_rank/dimension_rank_array.bin',
+        'world/ik_data/field/dimension/dimension_special_lottery/dimension_special_lottery/dimension_special_lottery_array.bin',
+        'world/ik_data/field/dimension/dimension_unique_lottery/dimension_unique_lottery/dimension_unique_lottery_array.bin',
+        'world/ik_data/field/dimension/dimension_wild_pokemon/dimension_wild_pokemon/dimension_wild_pokemon_array.bin',
+        'world/ik_data/field/dimension/dimension_zone_lottery/dimension_zone_lottery/dimension_zone_lottery_array.bin',
+    )
+    ZA_ROYALE_PATH = 'world/ik_data/capture/capture_ball_data/capture_ball_data.bin'
+
+    def iter_learnsets(self):
+        """personal_array: field 0 = Info (internal, form, national), field 25 = learnset (u16 move, s8 level, u8 plus)."""
+        d = self.read_file(self.PERSONAL_PATH)
+        if not d: return None
+        vt, to = fb_table(d, fb_root(d))
+        n, vo = fb_vector(d, to, _vt_off(vt, 0))
+        tag = {-3: 'Evo', -2: 'Relearn'}
+        out, seen = [], set()
+        for i in range(n):
+            p = vo + 4 * i; p += struct.unpack_from('<I', d, p)[0]
+            evt, eto = fb_table(d, p)
+            o = _vt_off(evt, 0); info = o and struct.unpack_from('<HHH', d, eto + o)
+            ls = tuple((tag.get(lv, lv), mv) for mv, lv, _ in fb_vec(d, evt, eto, 25, '<HbB', 4) or [])
+            if not info or (info[2], ls) in seen: continue  # megas sharing the base learnset
+            seen.add((info[2], ls)); out.append((info[2], list(ls)))
+        return out
+
+    def iter_encounters(self):
+        """encount_data_array: root vec of 12 groups -> vec of slots. Slot f0 = id (zone code inside), f1 = species, f2/f3 = min/max lv, f5 = form."""
+        d = self.read_file(self.ENCOUNTER_PATH)
+        if not d: return None
+        def vec(vt, to):
+            n, vo = fb_vector(d, to, _vt_off(vt, 0))
+            return [vo + 4 * i + struct.unpack_from('<I', d, vo + 4 * i)[0] for i in range(n)]
+        out = []
+        for g in vec(*fb_table(d, fb_root(d))):
+            for s in vec(*fb_table(d, g)):
+                vt, to = fb_table(d, s)
+                eid = fb_str(d, vt, to, 0)
+                out.append((eid, fb_field(d, vt, to, 1, '<I'), fb_field(d, vt, to, 5, '<I') or 0,
+                            fb_field(d, vt, to, 2, '<I'), fb_field(d, vt, to, 3, '<I'), {'location': eid or 'Wild'}))
+        return out
 
     # ZA-specific: 160 TMs (107 base + 53 DLC), move IDs in bit order
     TM_MOVE_IDS = (
@@ -76,271 +208,6 @@ class Kalos_sequel(Paldea_sv):
         'Pokemon Legends: Z-A': ['LZA'],
     }
 
-    # ── decode_personal ─────────────────────────────────────────────
-    def decode_personal(self, data, file_idx, text_tables, tm_table=None):
-        """Decode ZA personal data (FlatBuffer). Everything is embedded:
-        stats, types, abilities, evos, learnsets, TMs, eggs, reminders,
-        classification, alpha move, mega evo lookup, gender, hatch, dex."""
-        if len(data) < 12:
-            return None
-
-        species_list = text_tables.get('species', [])
-        type_list = text_tables.get('type_names', [])
-        ability_list = text_tables.get('abilities', [])
-        item_list = text_tables.get('items', [])
-        moves_list = text_tables.get('moves', [])
-
-        root = fb_root(data)
-        vt, to = fb_table(data, root)
-
-        # Field 0: Info (PersonalInfoDetail struct — 16 bytes inline)
-        info_off = fb_field(data, vt, to, 0, '<H')
-        spec_internal = spec_national = 0
-        height = weight = color = debut = 0
-        cls_major = cls_minor = form_num = 0
-        if info_off:
-            base = to + info_off
-            spec_internal = struct.unpack_from('<H', data, base)[0]
-            form_num = struct.unpack_from('<H', data, base + 2)[0]
-            spec_national = struct.unpack_from('<H', data, base + 4)[0]
-            color = data[base + 6]
-            height = struct.unpack_from('<H', data, base + 8)[0]
-            weight = struct.unpack_from('<H', data, base + 10)[0]
-            debut = data[base + 12]
-            cls_major = data[base + 13]
-            cls_minor = struct.unpack_from('<I', data, base + 14)[0]
-
-        # Field 1: IsPresentInGame
-        present = fb_field(data, vt, to, 1, '<B')
-        if present is not None:
-            present = bool(present)
-        else:
-            present = True
-
-        # Field 2: Dex (nullable struct — Index u16, Group u8)
-        # Field 3-4: Types
-        type1 = fb_field(data, vt, to, 3, '<B') or 0
-        type2 = fb_field(data, vt, to, 4, '<B') or 0
-        # Field 5-7: Abilities (u16 each)
-        ab1 = fb_field(data, vt, to, 5, '<H') or 0
-        ab2 = fb_field(data, vt, to, 6, '<H') or 0
-        abH = fb_field(data, vt, to, 7, '<H') or 0
-        # Field 8: EXPGrowth, Field 9: CatchRate
-        exp_growth = fb_field(data, vt, to, 8, '<B') or 0
-        catch_rate = fb_field(data, vt, to, 9, '<B') or 0
-        # Field 10: Gender (struct: SexGroup u8, Ratio u8)
-        gender_off = fb_field(data, vt, to, 10, '<H')
-        gender_group = gender_ratio = 0
-        if gender_off:
-            g_base = to + gender_off
-            gender_group = data[g_base]
-            gender_ratio = data[g_base + 1]
-        # Field 11-12: EggGroups
-        egg1 = fb_field(data, vt, to, 11, '<B') or 0
-        egg2 = fb_field(data, vt, to, 12, '<B') or 0
-        # Field 13: Hatch (struct: SpeciesInternal u16, Form u16, RegionalFlags u16, EverstoneForm u16)
-        # Field 14: HatchCycles, Field 15: BaseFriendship
-        hatch_cycles = fb_field(data, vt, to, 14, '<B') or 0
-        friendship = fb_field(data, vt, to, 15, '<B') or 0
-        # Field 16: BaseEXPAddend (i16)
-        exp_addend = fb_field(data, vt, to, 16, '<h') or 0
-        # Field 17: EvoStage
-        evo_stage = fb_field(data, vt, to, 17, '<B') or 0
-        # Field 18: IsTypeChangeDisallowed
-        # Field 19: EVYield (PersonalInfoStats struct — 6 bytes)
-        ev_off = fb_field(data, vt, to, 19, '<H')
-        evs = []
-        if ev_off:
-            ev_base = to + ev_off
-            for i, stat in enumerate(self.EV_STAT_ORDER):
-                val = data[ev_base + i]
-                if val: evs.append(f"+{val} {stat}")
-        # Field 20: Base stats (PersonalInfoStats struct — 6 bytes: HP ATK DEF SPA SPD SPE)
-        stat_off = fb_field(data, vt, to, 20, '<H')
-        hp = atk = dfn = spa = spd = spe = 0
-        if stat_off:
-            s = to + stat_off
-            hp, atk, dfn, spa, spd, spe = data[s], data[s+1], data[s+2], data[s+3], data[s+4], data[s+5]
-        bst = hp + atk + dfn + spa + spd + spe
-
-        # Resolve names
-        species_name = species_list[spec_national] if spec_national < len(species_list) else f"#{spec_national}"
-        t1 = type_list[type1] if type1 < len(type_list) else f"type#{type1}"
-        t2 = type_list[type2] if type2 < len(type_list) else f"type#{type2}"
-        types_str = t1 if type1 == type2 else f"{t1} / {t2}"
-
-        ability_names = []
-        for aid, suffix in ((ab1, ''), (ab2, ''), (abH, ' (Hidden)')):
-            if aid > 0:
-                name = ability_list[aid] if aid < len(ability_list) else f"ability#{aid}"
-                ability_names.append(f"{name}{suffix}")
-
-        gender_str = f"{gender_ratio}% female" if gender_group == 0 else ('Male only', 'Female only', 'Genderless')[gender_group - 1] if 1 <= gender_group <= 3 else f"group#{gender_group}"
-
-
-        out = [f"{species_name} (#{spec_national})", f"{types_str} | BST {bst}",
-               f"HP {hp} | Atk {atk} | Def {dfn} | SpA {spa} | SpD {spd} | Spe {spe}",
-               f"Abilities: {' / '.join(ability_names)}" if ability_names else "Abilities: ---"]
-        out.append(f"Gender: {gender_str} | Catch Rate: {catch_rate} | Hatch: {hatch_cycles} cycles | Friendship: {friendship}")
-        out.append(f"Growth: {self.GROWTH_NAMES[exp_growth]} | Egg Groups: {self.EGG_GROUP_NAMES[egg1]}" +
-                   (f" / {self.EGG_GROUP_NAMES[egg2]}" if egg1 != egg2 else ""))
-        out.append(f"Height: {height / 100.0}m | Weight: {weight / 10.0}kg")
-        out.append(f"Evo Stage: {evo_stage} | EXP Addend: {exp_addend}")
-        if evs:
-            out.append(f"EVs: {', '.join(evs)}")
-        if not present:
-            out.append("NOT IN GAME")
-
-        # Classification
-        tags = []
-        if cls_major in self.CLASS_MAJOR: tags.append(self.CLASS_MAJOR[cls_major])
-        if cls_minor in self.CLASS_MINOR: tags.append(self.CLASS_MINOR[cls_minor])
-        if tags:
-            out.append(f"Classification: {' / '.join(tags)}")
-
-        # Field 21: Evolutions (vector of 16-byte structs)
-        evo_voff = fb_field(data, vt, to, 21, '<H')
-        if evo_voff:
-            count, doff = fb_vector(data, to, evo_voff)
-            for i in range(count):
-                e = doff + i * 16
-                level = struct.unpack_from('<H', data, e)[0]
-                method = struct.unpack_from('<H', data, e + 2)[0]
-                arg = struct.unpack_from('<H', data, e + 4)[0]
-                target_internal = struct.unpack_from('<H', data, e + 12)[0]
-                target_form = struct.unpack_from('<H', data, e + 14)[0]
-                tname = species_list[target_internal] if target_internal < len(species_list) else f"#{target_internal}"
-                form_str = f"-{target_form}" if target_form else ""
-                out.append(f"  Evo: {tname}{form_str} (method {method}, arg {arg}, lv {level})")
-
-        # Field 22: TechnicalMachine (vector of u16 move IDs)
-        tm_voff = fb_field(data, vt, to, 22, '<H')
-        if tm_voff:
-            count, doff = fb_vector(data, to, tm_voff)
-            tms = []
-            for i in range(count):
-                mid = struct.unpack_from('<H', data, doff + i * 2)[0]
-                mname = moves_list[mid] if mid < len(moves_list) else f"move#{mid}"
-                # Find TM number
-                tm_num = self.TM_MOVE_IDS.index(mid) + 1 if mid in self.TM_MOVE_IDS else 0
-                tms.append(f"TM{tm_num:03d} {mname}" if tm_num else mname)
-            if tms:
-                out.append(f"TMs ({len(tms)}): {' / '.join(tms)}")
-
-        # Field 23: EggMoves (vector of u16)
-        egg_voff = fb_field(data, vt, to, 23, '<H')
-        if egg_voff:
-            count, doff = fb_vector(data, to, egg_voff)
-            eggs = []
-            for i in range(count):
-                mid = struct.unpack_from('<H', data, doff + i * 2)[0]
-                eggs.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
-            if eggs:
-                out.append(f"Egg Moves: {' / '.join(eggs)}")
-
-        # Field 24: ReminderMoves (vector of u16)
-        rem_voff = fb_field(data, vt, to, 24, '<H')
-        if rem_voff:
-            count, doff = fb_vector(data, to, rem_voff)
-            rems = []
-            for i in range(count):
-                mid = struct.unpack_from('<H', data, doff + i * 2)[0]
-                rems.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
-            if rems:
-                out.append(f"Reminder: {' / '.join(rems)}")
-
-        # Field 25: Learnset (vector of 4-byte structs: Move u16, Level i8, LevelPlus u8)
-        learn_voff = fb_field(data, vt, to, 25, '<H')
-        if learn_voff:
-            count, doff = fb_vector(data, to, learn_voff)
-            learns = []
-            for i in range(count):
-                e = doff + i * 4
-                mid = struct.unpack_from('<H', data, e)[0]
-                level = struct.unpack_from('<b', data, e + 2)[0]
-                lplus = data[e + 3]
-                mname = moves_list[mid] if mid < len(moves_list) else f"move#{mid}"
-                lvl_str = 'EVO' if level == -3 else 'RELEARN' if level == -2 else str(level)
-                plus_str = f" {{{lplus}}}" if lplus else ""
-                learns.append(f"[{lvl_str}] {mname}{plus_str}")
-            if learns:
-                out.append(f"Learnset ({len(learns)}):")
-                for l in learns:
-                    out.append(f"  {l}")
-
-        return "\n".join(out)
-
-    # ── decode_move ─────────────────────────────────────────────────
-    def decode_move(self, data, file_idx, text_tables):
-        """Decode ZA move data (Waza FlatBuffer). Includes battle params."""
-        if len(data) < 12:
-            return None
-
-        moves_list = text_tables.get('moves', [])
-        type_list = text_tables.get('type_names', [])
-
-        root = fb_root(data)
-        vt, to = fb_table(data, root)
-
-        move_id = fb_field(data, vt, to, 0, '<H') or 0
-        can_use = fb_field(data, vt, to, 1, '<B')
-        mtype = fb_field(data, vt, to, 2, '<B') or 0
-        quality = fb_field(data, vt, to, 3, '<B') or 0
-        category = fb_field(data, vt, to, 4, '<B') or 0
-        power = fb_field(data, vt, to, 5, '<B') or 0
-        accuracy = fb_field(data, vt, to, 6, '<B') or 0
-        pp = fb_field(data, vt, to, 7, '<B') or 0
-        priority = fb_field(data, vt, to, 8, '<b') or 0
-        hit_max = fb_field(data, vt, to, 9, '<B') or 0
-        hit_min = fb_field(data, vt, to, 10, '<B') or 0
-        # Field 11: Inflict struct (6 bytes: value u16, chance u8, turn1-3 u8)
-        inflict_off = fb_field(data, vt, to, 11, '<H')
-        inflict_val = inflict_chance = 0
-        if inflict_off:
-            ib = to + inflict_off
-            inflict_val = struct.unpack_from('<H', data, ib)[0]
-            inflict_chance = data[ib + 2]
-        crit = fb_field(data, vt, to, 12, '<B') or 0
-        flinch = fb_field(data, vt, to, 13, '<B') or 0
-        effect_seq = fb_field(data, vt, to, 14, '<H') or 0
-        recoil = fb_field(data, vt, to, 15, '<b') or 0
-        self_heal = fb_field(data, vt, to, 16, '<b') or 0
-        dmg_heal = fb_field(data, vt, to, 17, '<B') or 0
-        target = fb_field(data, vt, to, 18, '<B') or 0
-
-        cat_str = self.CATEGORY_NAMES[category]
-        move_name = moves_list[move_id] if move_id < len(moves_list) else f"#{move_id}"
-        type_name = type_list[mtype] if mtype < len(type_list) else f"type#{mtype}"
-
-        out = [f"{move_name} (#{move_id})", f"{type_name} | {cat_str}"]
-        if power: out.append(f"Power: {power}")
-        out.append(f"Accuracy: {'--' if accuracy == 101 else accuracy} | PP: {pp}")
-        if priority: out.append(f"Priority: {'+' if priority > 0 else ''}{priority}")
-        if hit_min and hit_max:
-            out.append(f"Hits: {hit_min}-{hit_max}" if hit_min != hit_max else f"Hits: {hit_min}")
-        if crit: out.append(f"Crit Stage: +{crit}")
-        if flinch: out.append(f"Flinch: {flinch}%")
-        if inflict_val and inflict_chance:
-            out.append(f"Inflict: status#{inflict_val} ({inflict_chance}%)")
-        if recoil: out.append(f"Recoil: {recoil}%")
-        if self_heal: out.append(f"Self Heal: {self_heal}%")
-        if dmg_heal: out.append(f"Drain: {dmg_heal}%")
-
-        # Flags (fields 20+)
-        flag_names = [
-            (20, 'Contact'), (21, 'Charge'), (22, 'Recharge'), (23, 'Protect'),
-            (24, 'Reflectable'), (25, 'Snatch'), (26, 'Mirror'), (27, 'Punch'),
-            (28, 'Sound'), (29, 'Dance'), (30, 'Gravity'), (31, 'Defrost'),
-            (33, 'Heal'), (34, 'IgnoreSub'), (36, 'AnimateAlly'), (37, 'Metronome'),
-            (42, 'Powder'), (43, 'Bite'), (44, 'Bullet'), (47, 'SheerForce'),
-            (48, 'Slicing'), (49, 'Wind'),
-        ]
-        flags = [name for fi, name in flag_names if fb_field(data, vt, to, fi, '<B')]
-        if flags:
-            out.append(f"Flags: {' / '.join(flags)}")
-
-        return "\n".join(out)
-
     # ── decode_encounters ───────────────────────────────────────────
     def decode_encounters(self, data, file_idx, text_tables, path='', **kwargs):
         """Decode ZA encounter data (spawner-based).
@@ -354,8 +221,7 @@ class Kalos_sequel(Paldea_sv):
 
         # EncountData: Id, DevNo, MinLevel, MaxLevel, Sex, FormNo, Rare,
         #              Tokusei, Seikaku, TalentScale, TalentVNum, OyabunProbability
-        enc_id_off = fb_field(data, vt, to, 0, '<H')
-        enc_id = fb_string(data, to, enc_id_off) if enc_id_off else "?"
+        enc_id = fb_str(data, vt, to, 0) or "?"
         dev_no = fb_field(data, vt, to, 1, '<H') or 0
         min_lv = fb_field(data, vt, to, 2, '<i') or 0
         max_lv = fb_field(data, vt, to, 3, '<i') or 0
@@ -387,8 +253,92 @@ class Kalos_sequel(Paldea_sv):
 
         return "\n".join(out)
 
+    @staticmethod
+    def _parse_trid(trid, rank=None):
+        """Parse TrID into human-readable card label.
+        Two systems: STORY (Ev_) and ROYALE (za_).
+        Royale base: Bat # (Rnk X). Rooftop replaces Bat with Rftp."""
+        # ── Strip modifiers ──
+        variant = ''
+        for suf, lbl in (('_hono', ' (Fire)'), ('_kusa', ' (Grass)'), ('_mizu', ' (Water)')):
+            if trid.endswith(suf):
+                variant = lbl
+                trid = trid[:-len(suf)]
+                break
+        is_multi = '_multi' in trid
+        trid = trid.replace('_multi', '')
+
+        # ── SYSTEM 1: STORY ──
+        _REST = {'1': 'Le Nah', '2': 'Le Yeah', '3': 'Le Wow'}
+        if trid.startswith('Ev_m'):
+            parts = trid[4:].split('_')
+            mis = str(int(parts[0]))
+            if 'boss' in parts:
+                if variant:
+                    return f"Promo.{variant}"
+                if rank and rank not in ('Z', 'rank#0'):
+                    return f"Promo. (Rnk {rank})"
+                return f"Mis {mis}, Promo."
+            nums = [p for p in parts[1:] if p.isdigit()]
+            if nums:
+                if variant:
+                    return f"Mis {mis}{variant}"
+                n = int(nums[0])
+                ns = f"{n // 1000}k" if n >= 1000 else str(n)
+                return f"Mis {mis}, #{ns}"
+            return f"Mis {mis}{variant}"
+        if trid.startswith('Ev_sub_'):
+            parts = trid[7:].split('_')
+            mis = str(int(parts[0]))
+            multi = '; Multi' if is_multi else ''
+            if len(parts) > 1 and parts[1].isdigit():
+                return f"Sub-Mis {mis}, #{int(parts[1])}{multi}{variant}"
+            return f"Sub-Mis {mis}{multi}{variant}"
+        if trid.startswith('Ev_sys_rest'):
+            parts = trid[11:].split('_')
+            name = _REST.get(parts[0], f'Rest {parts[0]}')
+            num = str(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else '?'
+            return f"{name} #{num}{variant}"
+
+        # ── SYSTEM 2: ZA ROYALE ──
+        # Base: Bat # (Rnk X)
+        # Rooftop: Rftp # (Rnk X) — replaces Bat, not a modifier
+        # Inf tiers: Bat # (Rnk ∞; T#)
+        is_strong = '_strong' in trid
+        trid = trid.replace('_strong', '')
+
+        if trid.startswith('za_rank_inf'):
+            rest = trid[11:]
+            parts = rest.split('_')
+            tier = parts[0]
+            num = str(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else '?'
+            return f"Bat {num} (Rnk ∞; T{tier}){variant}"
+        if trid.startswith('za_rank_'):
+            rest = trid[8:]
+            parts = rest.split('_')
+            letter = parts[0].upper()
+            num = str(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else '?'
+            rnk = f"Rnk {letter}"
+            if is_strong:
+                if variant:
+                    return f"Rftp{variant}"
+                return f"Rftp {num} ({rnk}){variant}"
+            return f"Bat {num} ({rnk}){variant}"
+        if trid.startswith('za_inf_'):
+            rest = trid[7:]
+            parts = rest.split('_')
+            num = str(int(parts[0])) if parts[0].isdigit() else '?'
+            rnk = "Rnk ∞"
+            if is_strong:
+                if variant:
+                    return f"Rftp{variant}"
+                return f"Rftp {num} ({rnk}){variant}"
+            return f"Bat {num} ({rnk}){variant}"
+
+        return trid + variant
+
     # ── decode_trainer ──────────────────────────────────────────────
-    def decode_trainer(self, data, file_idx, text_tables):
+    def decode_trainer(self, data, file_idx, text_tables, path='', **kwargs):
         """Decode ZA trainer (TrDataMain FlatBuffer).
         Includes team, mega flags, AI, vision cone, env/dlog."""
         if len(data) < 12:
@@ -400,9 +350,19 @@ class Kalos_sequel(Paldea_sv):
 
         root = fb_root(data)
         vt, to = fb_table(data, root)
+        # Array wrapper has 1 field (the vector), individual entries have 25+
+        if len(vt) <= 8:
+            _tf = _vt_off(vt, 0)
+            if not _tf:
+                return None
+            cnt, doff = fb_vector(data, to, _tf)
+            if file_idx >= cnt:
+                return None
+            _eop = doff + file_idx * 4
+            _erel = struct.unpack_from('<I', data, _eop)[0]
+            vt, to = fb_table(data, _eop + _erel)
 
-        tr_id_off = fb_field(data, vt, to, 0, '<H')
-        tr_id = fb_string(data, to, tr_id_off) if tr_id_off else "?"
+        tr_id = fb_str(data, vt, to, 0) or "?"
         tr_type = fb_field(data, vt, to, 1, '<Q') or 0
         tr_type2 = fb_field(data, vt, to, 2, '<Q') or 0
         za_rank = fb_field(data, vt, to, 3, '<B') or 0
@@ -411,19 +371,89 @@ class Kalos_sequel(Paldea_sv):
         last_mega = fb_field(data, vt, to, 6, '<B') or 0
 
         rank_str = self.ZA_RANKS[za_rank] if za_rank < len(self.ZA_RANKS) else f"rank#{za_rank}"
-        out = [f"Trainer: {tr_id} | Rank {rank_str} | Money x{money_rate}"]
+
+        # Resolve class + name via AHTB (docs/za_trainer_card_format.md)
+        class_name = ''
+        trainer_name = tr_id
+        fmt_flags = 0
+        _text_path = getattr(self, 'TEXT_PATH', '')
+        _ahtb_list = getattr(self, '_ahtb_cache', {}).get(_text_path, [])
+        _text_narc = self._narc_cache.get(_text_path)
+
+        # trainer_classes file index
+        _tc = text_tables.get('trainer_classes')
+        _tc_idx = None
+        if _tc:
+            for k, v in text_tables.items():
+                if isinstance(k, int) and v is _tc:
+                    _tc_idx = k; break
+
+        # trainer_names file index
+        _tn = text_tables.get('trainer_names')
+        _tn_idx = None
+        if _tn:
+            for k, v in text_tables.items():
+                if isinstance(k, int) and v is _tn:
+                    _tn_idx = k; break
+
+        # Class name via trtype AHTB hash match
+        if _tc_idx is not None and _tc_idx < len(_ahtb_list):
+            for ci, (h, _) in enumerate(self.parse_ahtb(_ahtb_list[_tc_idx])):
+                if h == tr_type:
+                    if ci < len(_tc): class_name = _tc[ci]
+                    if _text_narc and _tc_idx < len(_text_narc.files):
+                        _dat = _text_narc.files[_tc_idx]
+                        _foff = 0x14 + ci * 8 + 6
+                        if _foff + 2 <= len(_dat):
+                            fmt_flags = struct.unpack_from('<H', _dat, _foff)[0]
+                    break
+
+        # Display name via trname AHTB: match TrId against AHTB keys
+        if _tn_idx is not None and _tn_idx < len(_ahtb_list):
+            _ahtb_entries = self.parse_ahtb(_ahtb_list[_tn_idx])
+            # Try direct TrID match first
+            for ni, (h, key) in enumerate(_ahtb_entries):
+                if key == tr_id:
+                    if ni < len(_tn): trainer_name = _tn[ni]
+                    break
+            else:
+                # Fallback: reverse lookup index -> trname_keys -> display names
+                _i2t = getattr(self, '_idx_to_trname', {})
+                _keys = _i2t.get(file_idx, [])
+                if _keys:
+                    _names = []
+                    for _k in _keys:
+                        for ni, (h, key) in enumerate(_ahtb_entries):
+                            if key == _k:
+                                if ni < len(_tn) and _tn[ni] not in _names:
+                                    _names.append(_tn[ni])
+                                break
+                    if _names:
+                        _dn = getattr(self, '_dowse_resolved', None)
+                        trainer_name = _dn if _dn and _dn in _names else '/'.join(_names)
+
+        # Format template (4 patterns from the game's text flags)
+        fmt = (fmt_flags >> 7) & 0b11
+        article = ((fmt_flags >> 9) & 1) == 0
+        if class_name:
+            if fmt == 1 and article: display = f"{trainer_name} of the {class_name}"
+            elif fmt == 1:           display = f"{trainer_name} of {class_name}"
+            elif fmt == 2:           display = f"{trainer_name} the {class_name}"
+            else:                    display = f"{class_name} {trainer_name}"
+        else:
+            display = trainer_name
+
+        parsed_label = self._parse_trid(tr_id, rank_str)
+        out = [f"{display}"]
         if mega:
             out.append(f"Mega Evolution: {'Last Pokemon only' if last_mega else 'Yes'}")
 
+        highest_level = 0
         # Poke1-6 are fields 7-12 (PokeDataBattle sub-tables)
         for slot in range(6):
-            poke_off = fb_field(data, vt, to, 7 + slot, '<H')
-            if not poke_off:
+            pvt, pto = fb_sub(data, vt, to, 7 + slot)
+            if not pvt:
                 continue
-            # Navigate to sub-table
-            abs_off = to + poke_off
-            sub_off = abs_off + struct.unpack_from('<I', data, abs_off)[0]
-            pvt, pto = fb_table(data, sub_off)
             dev = fb_field(data, pvt, pto, 0, '<H') or 0
             if dev == 0:
                 continue
@@ -431,6 +461,7 @@ class Kalos_sequel(Paldea_sv):
             sex = fb_field(data, pvt, pto, 2, '<B') or 0
             item = fb_field(data, pvt, pto, 3, '<i') or 0
             level = fb_field(data, pvt, pto, 4, '<i') or 0
+            if level > highest_level: highest_level = level
 
             sp_name = species_list[dev] if dev < len(species_list) else f"#{dev}"
             form_str = f"-{form}" if form else ""
@@ -440,11 +471,8 @@ class Kalos_sequel(Paldea_sv):
             # Moves are fields 6-9 (WazaSetBattle sub-tables)
             move_names = []
             for mi in range(4):
-                m_off = fb_field(data, pvt, pto, 6 + mi, '<H')
-                if m_off:
-                    m_abs = pto + m_off
-                    m_sub = m_abs + struct.unpack_from('<I', data, m_abs)[0]
-                    mvt, mto = fb_table(data, m_sub)
+                mvt, mto = fb_sub(data, pvt, pto, 6 + mi)
+                if mvt:
                     mid = fb_field(data, mvt, mto, 0, '<H') or 0
                     if mid:
                         move_names.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
@@ -452,21 +480,27 @@ class Kalos_sequel(Paldea_sv):
             moves_str = f" [{' / '.join(move_names)}]" if move_names else ""
             out.append(f"  {slot+1}. {sp_name}{form_str} Lv{level}{item_str}{moves_str}")
 
+        if money_rate and highest_level:
+            out.append(f"Prize: \u00a5{money_rate * 4 * highest_level:,}")
+
         # AI flags (fields 13-20)
         ai_names = ['Basic', 'High', 'Expert', 'Double', 'Raid', 'Weak', 'Item', 'Change']
         ai_flags = [name for i, name in enumerate(ai_names) if fb_field(data, vt, to, 13 + i, '<B')]
         if ai_flags:
             out.append(f"AI: {' / '.join(ai_flags)}")
 
-        # Vision cone (fields 21-24)
-        h_angle = fb_field(data, vt, to, 21, '<f')
-        v_angle = fb_field(data, vt, to, 22, '<f')
-        v_range = fb_field(data, vt, to, 23, '<f')
-        hearing = fb_field(data, vt, to, 24, '<f')
-        if h_angle and v_range:
-            out.append(f"Detection: {h_angle:.0f}x{v_angle:.0f} deg, {v_range:.1f}m range, {hearing:.1f}m hearing")
+        _ABBREV = [('Bat', 'Battle'), ('Rftp', 'Rooftop'), ('Rnk', 'Rank'),
+                   ('Mis', 'Mission'), ('Promo.', 'Promotion')]
+        legend = [f'{a}={full}' for a, full in _ABBREV if a in parsed_label]
+        if legend:
+            out.append(' | '.join(legend))
 
-        return "\n".join(out)
+        # Rival shared-index note: raw decipher shows both names, dowse disambiguates
+        if '/' in trainer_name:
+            out.append('')
+            out.append("""Ah, seems you stumbled here by accident. In case you didn’t know, the two names up above are those for the rival, who share trainer data in this game. The male’s name is Urbain, the female? Taunie. How is it they share this indice when no other rival (Like Dawn, Lucas, Brendan, or May) in this series has ever shared an indice with their counterpart? Basically, Nintendo managed to make the data in their game irregular (Don’t ask me HOW they did that, as I do not know at all.). But you don’t need to know all of this. All you need to know is they are one character internally, as shown by this data, and that their gender is determined by a byte in a player’s save data. If you come back using the same tool after searching (via dowse), then you may notice a surprise! Bye!""")
+
+        return "\n".join(out), parsed_label
 
     # ── decode_item ─────────────────────────────────────────────────
     def decode_item(self, data, file_idx, text_tables):
@@ -480,8 +514,7 @@ class Kalos_sequel(Paldea_sv):
         item_id = fb_field(data, vt, to, 0, '<i') or 0
         # Field 1: ItemType, Field 2: InternalName, Field 3: IconName
         item_type = fb_field(data, vt, to, 1, '<i') or 0
-        name_off = fb_field(data, vt, to, 2, '<H')
-        internal_name = fb_string(data, to, name_off) if name_off else f"item#{item_id}"
+        internal_name = fb_str(data, vt, to, 2) or f"item#{item_id}"
         price = fb_field(data, vt, to, 4, '<i') or 0
         pocket = fb_field(data, vt, to, 5, '<i') or 0
         stack_max = fb_field(data, vt, to, 6, '<i') or 0
@@ -510,204 +543,175 @@ class Kalos_sequel(Paldea_sv):
 
     # ── decode_donut ────────────────────────────────────────────────
     def decode_donut(self, data, file_idx, text_tables, path='', **kwargs):
-        """Decode ZA donut system. Berry -> recipe -> flavor -> power.
-        DLC currencies (Mega Shards, Colorful Screws) live here.
-        Path determines section: world/exl/donut/{berry,donut_recipe,flavor,...}"""
-        if len(data) < 12:
-            return None
+        """Decode ZA donut system. Dispatch by path subsection."""
+        section = path.split(self.DONUT_PATH + '/')[-1].split('/')[0] if self.DONUT_PATH in path else ''
+        method = getattr(self, f'_decode_{section}', None)
+        if not method or len(data) < 12: return None
+        return method(data, fb_root(data), text_tables)
 
-        root = fb_root(data)
+    def _decode_berry(self, data, root, text_tables):
         vt, to = fb_table(data, root)
+        item_id = fb_field(data, vt, to, 0, '<I') or 0
+        donut_idx = fb_field(data, vt, to, 1, '<I') or 0
+        is_hyper = fb_field(data, vt, to, 2, '<B') or 0
+        spicy = fb_field(data, vt, to, 3, '<I') or 0
+        fresh = fb_field(data, vt, to, 4, '<I') or 0
+        sweet = fb_field(data, vt, to, 5, '<I') or 0
+        bitter = fb_field(data, vt, to, 6, '<I') or 0
+        sour = fb_field(data, vt, to, 7, '<I') or 0
+        lv_boost = fb_field(data, vt, to, 8, '<I') or 0
+        calories = fb_field(data, vt, to, 9, '<I') or 0
+        items = text_tables.get('items', [])
+        iname = items[item_id] if item_id < len(items) else f"item#{item_id}"
+        out = [f"{iname} (donut #{donut_idx})"]
+        out.append(f"Spicy {spicy} | Fresh {fresh} | Sweet {sweet} | Bitter {bitter} | Sour {sour}")
+        out.append(f"Calories: {calories} | Lv Boost: {lv_boost}")
+        if is_hyper: out.append("Hyperspace Berry")
+        return "\n".join(out)
 
-        section = path.replace(self.DONUT_PATH + '/', '').split('/')[0] if self.DONUT_PATH in path else ''
-        if section == 'berry':
-            item_id = fb_field(data, vt, to, 0, '<I') or 0
-            donut_idx = fb_field(data, vt, to, 1, '<I') or 0
-            is_hyper = fb_field(data, vt, to, 2, '<B') or 0
-            spicy = fb_field(data, vt, to, 3, '<I') or 0
-            fresh = fb_field(data, vt, to, 4, '<I') or 0
-            sweet = fb_field(data, vt, to, 5, '<I') or 0
-            bitter = fb_field(data, vt, to, 6, '<I') or 0
-            sour = fb_field(data, vt, to, 7, '<I') or 0
-            lv_boost = fb_field(data, vt, to, 8, '<I') or 0
-            calories = fb_field(data, vt, to, 9, '<I') or 0
-            items = text_tables.get('items', [])
-            iname = items[item_id] if item_id < len(items) else f"item#{item_id}"
-            out = [f"{iname} (donut #{donut_idx})"]
-            out.append(f"Spicy {spicy} | Fresh {fresh} | Sweet {sweet} | Bitter {bitter} | Sour {sour}")
-            out.append(f"Calories: {calories} | Lv Boost: {lv_boost}")
-            if is_hyper: out.append("Hyperspace Berry")
-            return "\n".join(out)
+    def _decode_donut_recipe(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        idx = fb_field(data, vt, to, 0, '<I') or 0
+        s_min = fb_field(data, vt, to, 1, '<I') or 0
+        s_max = fb_field(data, vt, to, 2, '<I') or 0
+        sp_min = fb_field(data, vt, to, 3, '<I') or 0
+        sp_max = fb_field(data, vt, to, 4, '<I') or 0
+        so_min = fb_field(data, vt, to, 5, '<I') or 0
+        so_max = fb_field(data, vt, to, 6, '<I') or 0
+        b_min = fb_field(data, vt, to, 7, '<I') or 0
+        b_max = fb_field(data, vt, to, 8, '<I') or 0
+        f_min = fb_field(data, vt, to, 9, '<I') or 0
+        f_max = fb_field(data, vt, to, 10, '<I') or 0
+        rname = fb_str(data, vt, to, 12) or f"recipe#{idx}"
+        out = [f"Recipe: {rname} (#{idx})"]
+        out.append(f"Sweet {s_min}-{s_max} | Spicy {sp_min}-{sp_max} | Sour {so_min}-{so_max} | Bitter {b_min}-{b_max} | Fresh {f_min}-{f_max}")
+        return "\n".join(out)
 
-        if section == 'donut_recipe':
-            idx = fb_field(data, vt, to, 0, '<I') or 0
-            s_min = fb_field(data, vt, to, 1, '<I') or 0
-            s_max = fb_field(data, vt, to, 2, '<I') or 0
-            sp_min = fb_field(data, vt, to, 3, '<I') or 0
-            sp_max = fb_field(data, vt, to, 4, '<I') or 0
-            so_min = fb_field(data, vt, to, 5, '<I') or 0
-            so_max = fb_field(data, vt, to, 6, '<I') or 0
-            b_min = fb_field(data, vt, to, 7, '<I') or 0
-            b_max = fb_field(data, vt, to, 8, '<I') or 0
-            f_min = fb_field(data, vt, to, 9, '<I') or 0
-            f_max = fb_field(data, vt, to, 10, '<I') or 0
-            name_off = fb_field(data, vt, to, 12, '<H')
-            rname = fb_string(data, to, name_off) if name_off else f"recipe#{idx}"
-            out = [f"Recipe: {rname} (#{idx})"]
-            out.append(f"Sweet {s_min}-{s_max} | Spicy {sp_min}-{sp_max} | Sour {so_min}-{so_max} | Bitter {b_min}-{b_max} | Fresh {f_min}-{f_max}")
-            return "\n".join(out)
-
-        if section == 'flavor_parameter':
-            flav_off = fb_field(data, vt, to, 0, '<H')
-            flavor = fb_string(data, to, flav_off) if flav_off else "?"
-            boost_arg = fb_field(data, vt, to, 3, '<i') or 0
-            is_battle = fb_field(data, vt, to, 6, '<B') or 0
-            level = fb_field(data, vt, to, 7, '<i') or 0
-            is_special = fb_field(data, vt, to, 9, '<B') or 0
-            name_off = fb_field(data, vt, to, 10, '<H')
-            fname = fb_string(data, to, name_off) if name_off else flavor
-            out = [f"Flavor: {fname} (Lv{level})"]
-            out.append(f"Power: {flavor} | Boost: type#{boost_arg}")
-            if is_battle: out.append("Battle Stat Boost")
-            if is_special: out.append("Special Flavor")
-            return "\n".join(out)
-
-        return None
+    def _decode_flavor_parameter(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        flavor = fb_str(data, vt, to, 0) or "?"
+        boost_arg = fb_field(data, vt, to, 3, '<i') or 0
+        is_battle = fb_field(data, vt, to, 6, '<B') or 0
+        level = fb_field(data, vt, to, 7, '<i') or 0
+        is_special = fb_field(data, vt, to, 9, '<B') or 0
+        fname = fb_str(data, vt, to, 10) or flavor
+        out = [f"Flavor: {fname} (Lv{level})"]
+        out.append(f"Power: {flavor} | Boost: type#{boost_arg}")
+        if is_battle: out.append("Battle Stat Boost")
+        if is_special: out.append("Special Flavor")
+        return "\n".join(out)
 
     # ── decode_dimension ────────────────────────────────────────────
     def decode_dim(self, data, file_idx, text_tables, path='', **kwargs):
-        """Decode ZA dimension system. Rank progression + bosses + zones.
-        Wild encounters branch to decode_encounters.
-        Path determines section: world/ik_data/field/dimension/{dimension_rank,...}"""
-        if len(data) < 12:
-            return None
-
-        root = fb_root(data)
-        vt, to = fb_table(data, root)
-
-        section = path.replace(self.DIM_PATH + '/', '').split('/')[0] if self.DIM_PATH in path else ''
+        """Decode ZA dimension system. Dispatch by path subsection."""
+        section = path.split(self.DIM_PATH + '/')[-1].split('/')[0] if self.DIM_PATH in path else ''
         if section == 'dimension_wild_pokemon':
             return self.decode_encounters(data, file_idx, text_tables, path=path)
-        if section == 'dimension_rank':
-            rank = fb_field(data, vt, to, 0, '<i') or 0
-            ext_level = fb_field(data, vt, to, 1, '<i') or 0
-            est_level = fb_field(data, vt, to, 2, '<i') or 0
-            limit_speed = fb_field(data, vt, to, 3, '<f') or 0.0
-            rank_str = self.ZA_RANKS[rank] if rank < len(self.ZA_RANKS) else f"#{rank}"
-            out = [f"Dimension Rank {rank_str}"]
-            out.append(f"Extension Lv: {ext_level} | Estimate Lv: {est_level}")
-            out.append(f"Limit Reduction: {limit_speed:.2f}")
-            return "\n".join(out)
+        method = getattr(self, f'_decode_{section}', None)
+        if not method or len(data) < 12: return None
+        return method(data, fb_root(data), text_tables)
 
-        if section == 'dimension_boss_lottery':
-            species_list = text_tables.get('species', [])
-            boss_id_off = fb_field(data, vt, to, 0, '<H')
-            boss_id = fb_string(data, to, boss_id_off) if boss_id_off else "?"
-            rank = fb_field(data, vt, to, 2, '<i') or 0
-            est_lv = fb_field(data, vt, to, 3, '<i') or 0
-            ext_lv = fb_field(data, vt, to, 4, '<i') or 0
-            rematch = fb_field(data, vt, to, 5, '<B') or 0
-            dev_no = fb_field(data, vt, to, 6, '<i') or 0
-            form = fb_field(data, vt, to, 7, '<i') or 0
-            sp_name = species_list[dev_no] if dev_no < len(species_list) else f"#{dev_no}"
-            form_str = f"-{form}" if form else ""
-            rank_str = self.ZA_RANKS[rank] if rank < len(self.ZA_RANKS) else f"#{rank}"
-            out = [f"Boss: {sp_name}{form_str} [{boss_id}]"]
-            out.append(f"Rank {rank_str} | Lv {est_lv}+{ext_lv}")
-            if rematch: out.append("Rematch available")
-            return "\n".join(out)
+    def _decode_dimension_rank(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        rank = fb_field(data, vt, to, 0, '<i') or 0
+        ext_level = fb_field(data, vt, to, 1, '<i') or 0
+        est_level = fb_field(data, vt, to, 2, '<i') or 0
+        limit_speed = fb_field(data, vt, to, 3, '<f') or 0.0
+        rank_str = self.ZA_RANKS[rank] if rank < len(self.ZA_RANKS) else f"#{rank}"
+        out = [f"Dimension Rank {rank_str}"]
+        out.append(f"Extension Lv: {ext_level} | Estimate Lv: {est_level}")
+        out.append(f"Limit Reduction: {limit_speed:.2f}")
+        return "\n".join(out)
 
-        if section == 'dimension_progress':
-            prog_id_off = fb_field(data, vt, to, 0, '<H')
-            prog_id = fb_string(data, to, prog_id_off) if prog_id_off else "?"
-            wild_min = fb_field(data, vt, to, 1, '<i') or 0
-            wild_max = fb_field(data, vt, to, 2, '<i') or 0
-            battle_min = fb_field(data, vt, to, 3, '<i') or 0
-            battle_max = fb_field(data, vt, to, 4, '<i') or 0
-            event_min = fb_field(data, vt, to, 5, '<i') or 0
-            event_max = fb_field(data, vt, to, 6, '<i') or 0
-            out = [f"Dimension Progress: {prog_id}"]
-            out.append(f"Wild: {wild_min}-{wild_max} | Battle: {battle_min}-{battle_max} | Event: {event_min}-{event_max}")
-            return "\n".join(out)
+    def _decode_dimension_boss_lottery(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        species_list = text_tables.get('species', [])
+        boss_id = fb_str(data, vt, to, 0) or "?"
+        rank = fb_field(data, vt, to, 2, '<i') or 0
+        est_lv = fb_field(data, vt, to, 3, '<i') or 0
+        ext_lv = fb_field(data, vt, to, 4, '<i') or 0
+        rematch = fb_field(data, vt, to, 5, '<B') or 0
+        dev_no = fb_field(data, vt, to, 6, '<i') or 0
+        form = fb_field(data, vt, to, 7, '<i') or 0
+        sp_name = species_list[dev_no] if dev_no < len(species_list) else f"#{dev_no}"
+        form_str = f"-{form}" if form else ""
+        rank_str = self.ZA_RANKS[rank] if rank < len(self.ZA_RANKS) else f"#{rank}"
+        out = [f"Boss: {sp_name}{form_str} [{boss_id}]"]
+        out.append(f"Rank {rank_str} | Lv {est_lv}+{ext_lv}")
+        if rematch: out.append("Rematch available")
+        return "\n".join(out)
 
-        return None
+    def _decode_dimension_progress(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        prog_id = fb_str(data, vt, to, 0) or "?"
+        wild_min = fb_field(data, vt, to, 1, '<i') or 0
+        wild_max = fb_field(data, vt, to, 2, '<i') or 0
+        battle_min = fb_field(data, vt, to, 3, '<i') or 0
+        battle_max = fb_field(data, vt, to, 4, '<i') or 0
+        event_min = fb_field(data, vt, to, 5, '<i') or 0
+        event_max = fb_field(data, vt, to, 6, '<i') or 0
+        out = [f"Dimension Progress: {prog_id}"]
+        out.append(f"Wild: {wild_min}-{wild_max} | Battle: {battle_min}-{battle_max} | Event: {event_min}-{event_max}")
+        return "\n".join(out)
 
     # ── decode_za_royale ────────────────────────────────────────────
     def decode_za_royale(self, data, file_idx, text_tables, path='', **kwargs):
-        """Decode ZA Royale capture system. Ball multipliers, status bonuses,
-        back-strike, AI state, rank-based catch scaling.
-        Path: world/ik_data/capture/{capture_ball_data, capture_data, capture_zarank_data}"""
-        if len(data) < 12:
-            return None
+        """Decode ZA Royale capture system. Dispatch by path subsection."""
+        section = path.split(self.ZA_ROYALE_PATH + '/')[-1].split('/')[0] if self.ZA_ROYALE_PATH in path else ''
+        method = getattr(self, f'_decode_{section}', None)
+        if not method or len(data) < 12: return None
+        return method(data, fb_root(data), text_tables)
 
-        root = fb_root(data)
+    def _decode_capture_ball_data(self, data, root, text_tables):
         vt, to = fb_table(data, root)
-        section = path.replace(self.ZA_ROYALE_PATH + '/', '').split('/')[0] if self.ZA_ROYALE_PATH in path else ''
+        item_list = text_tables.get('items', [])
+        out = ['Ball Catch Rate Multipliers']
+        # Read all fields as f32 - each is a ball's catch multiplier
+        fi = 0
+        while True:
+            val = fb_field(data, vt, to, fi, '<f')
+            if val is None:
+                break
+            if val != 0.0:
+                out.append(f'  field {fi}: {val:.2f}x')
+            fi += 1
+        return '\n'.join(out)
 
-        if section == 'capture_ball_data':
-            item_list = text_tables.get('items', [])
-            out = ['Ball Catch Rate Multipliers']
-            # Read all fields as f32 - each is a ball's catch multiplier
-            fi = 0
-            while True:
-                val = fb_field(data, vt, to, fi, '<f')
-                if val is None:
-                    break
-                if val != 0.0:
-                    out.append(f'  field {fi}: {val:.2f}x')
-                fi += 1
-            return '\n'.join(out)
+    def _decode_capture_data(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        out = ['Capture Mechanics']
+        svt, sto = fb_sub(data, vt, to, 0)
+        if svt:
+            status = [('Freeze', 0), ('Sleep', 1), ('Poison', 2), ('Burn', 3), ('Paralysis', 4)]
+            bonuses = []
+            for name, fi in status:
+                v = fb_field(data, svt, sto, fi, '<f')
+                if v: bonuses.append(f'{name} {v:.2f}x')
+            if bonuses: out.append(f'  Status: {", ".join(bonuses)}')
+        rare = fb_field(data, vt, to, 1, '<f')
+        if rare: out.append(f'  Shiny bonus: {rare:.2f}x')
+        bvt, bto = fb_sub(data, vt, to, 2)
+        if bvt:
+            cow = fb_field(data, bvt, bto, 0, '<f')
+            ncow = fb_field(data, bvt, bto, 1, '<f')
+            out.append(f'  Back-strike: coward {cow:.2f}x / brave {ncow:.2f}x')
+        oyabun = fb_field(data, vt, to, 6, '<f')
+        oyabun_ch = fb_field(data, vt, to, 7, '<f')
+        if oyabun: out.append(f'  Alpha penalty: {oyabun:.2f}x (chance {oyabun_ch:.2f})')
+        angle = fb_field(data, vt, to, 9, '<i')
+        height = fb_field(data, vt, to, 10, '<i')
+        if angle: out.append(f'  Back-strike angle: {angle} deg, height: {height}')
+        return '\n'.join(out)
 
-        if section == 'capture_data':
-            out = ['Capture Mechanics']
-            # Sick sub-table (field 0)
-            sick_off = fb_field(data, vt, to, 0, '<H')
-            if sick_off:
-                sb = to + sick_off
-                s_sub = sb + struct.unpack_from('<I', data, sb)[0]
-                svt, sto = fb_table(data, s_sub)
-                status = [('Freeze', 0), ('Sleep', 1), ('Poison', 2), ('Burn', 3), ('Paralysis', 4)]
-                bonuses = []
-                for name, fi in status:
-                    v = fb_field(data, svt, sto, fi, '<f')
-                    if v: bonuses.append(f'{name} {v:.2f}x')
-                if bonuses: out.append(f'  Status: {", ".join(bonuses)}')
-            rare = fb_field(data, vt, to, 1, '<f')
-            if rare: out.append(f'  Shiny bonus: {rare:.2f}x')
-            # BackStrike (field 2)
-            bs_off = fb_field(data, vt, to, 2, '<H')
-            if bs_off:
-                bb = to + bs_off
-                b_sub = bb + struct.unpack_from('<I', data, bb)[0]
-                bvt, bto = fb_table(data, b_sub)
-                cow = fb_field(data, bvt, bto, 0, '<f')
-                ncow = fb_field(data, bvt, bto, 1, '<f')
-                out.append(f'  Back-strike: coward {cow:.2f}x / brave {ncow:.2f}x')
-            oyabun = fb_field(data, vt, to, 6, '<f')
-            oyabun_ch = fb_field(data, vt, to, 7, '<f')
-            if oyabun: out.append(f'  Alpha penalty: {oyabun:.2f}x (chance {oyabun_ch:.2f})')
-            angle = fb_field(data, vt, to, 9, '<i')
-            height = fb_field(data, vt, to, 10, '<i')
-            if angle: out.append(f'  Back-strike angle: {angle} deg, height: {height}')
-            return '\n'.join(out)
-
-        if section == 'capture_zarank_data':
-            out = ['ZA Rank Catch Rate Scaling']
-            # Field 0: LevelThreshold (inline struct, 10 ints)
-            thresh_off = fb_field(data, vt, to, 0, '<H')
-            if thresh_off:
-                tb = to + thresh_off
-                levels = [struct.unpack_from('<i', data, tb + i*4)[0] for i in range(10)]
-                out.append(f'  Level brackets: {levels}')
-            # Fields 1-13: rank arrays (Z,Y,X,W,V,G,F,E,D,C,B,A,Inf)
-            rank_names = self.ZA_RANKS
-            for ri, rname in enumerate(rank_names):
-                r_off = fb_field(data, vt, to, 1 + ri, '<H')
-                if r_off:
-                    rb = to + r_off
-                    ratios = [struct.unpack_from('<f', data, rb + i*4)[0] for i in range(10)]
-                    ratios_str = ' '.join(f'{r:.2f}' for r in ratios)
-                    out.append(f'  Rank {rname}: [{ratios_str}]')
-            return '\n'.join(out)
-
-        return None
+    def _decode_capture_zarank_data(self, data, root, text_tables):
+        vt, to = fb_table(data, root)
+        out = ['ZA Rank Catch Rate Scaling']
+        thresh = fb_struct(data, vt, to, 0, '<10i')
+        if thresh:
+            out.append(f'  Level brackets: {list(thresh)}')
+        for ri, rname in enumerate(self.ZA_RANKS):
+            ratios = fb_struct(data, vt, to, 1 + ri, '<10f')
+            if ratios:
+                ratios_str = ' '.join(f'{r:.2f}' for r in ratios)
+                out.append(f'  Rank {rname}: [{ratios_str}]')
+        return '\n'.join(out)

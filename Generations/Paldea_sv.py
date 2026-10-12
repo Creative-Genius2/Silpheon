@@ -3,21 +3,35 @@
 Inherits Sinnoh_prequel. Gen IX: Terastallize, open world, Trinity engine.
 DLC: The Teal Mask (Kitakami), The Indigo Disk (Blueberry Academy).
 """
-from Generations.Sinnoh_prequel import Sinnoh_prequel
+from Sinnoh_prequel import Sinnoh_prequel
 
 import struct
-from leswitch import fb_field, fb_root, fb_string, fb_table, fb_vector
+from leswitch import fb_field, fb_root, fb_string, fb_table, fb_vector, fb_str, fb_sub, fb_struct, fb_scalars, fb_vec, _vt_off
 
 
 class Paldea_sv(Sinnoh_prequel):
     """Scarlet / Violet."""
 
-    GAME_CODES = ('SCA', 'VIO')
-    TITLES = ('POKÉMON SCARLET', 'POKÉMON VIOLET')
+    GAME_CODES = ('SCA', 'SCA', 'SCA', 'VIO', 'VIO', 'VIO')
+    TITLE_IDS = (0x0100A3D008C5C000, 0x0100A3D008C5C800, 0x0100A3D008C5D001,
+                 0x01008F6008C5E000, 0x01008F6008C5E800, 0x01008F6008C5F001)
+    TITLES = ('Pokémon Scarlet', 'Pokémon Scarlet: Version 4.0.0', 'Pokémon Scarlet: Download Key for Version 4.0.0',
+              'Pokémon Violet', 'Pokémon Violet: Version 4.0.0', 'Pokémon Violet: Download Key for Version 4.0.0')
     YEAR = 2022
 
     GEN = 9
     SPECIES_COUNT = 1025
+
+    EVO_WALK_STEPS_WITH = 50
+    EVO_UNION_CIRCLE = 51
+    EVO_BATTLE_EC25 = 52
+    EVO_BATTLE_EC_ELSE = 53
+    EVO_COLLECT_999 = 54
+    EVO_DEFEAT_EQUALS = 55
+    EVO_USE_MOVE_SPECIAL = 56
+    EVO_KNOW_MOVE_EC_ELSE = 57
+    EVO_KNOW_MOVE_EC25 = 58
+    PERSONAL_FIELD_SHIFT = 0  # ZA overrides to -2 (KitakamiDex/BlueberryDex removed)
 
     # -- Trinity filesystem --
     CONTAINER = 'trinity'
@@ -33,13 +47,55 @@ class Paldea_sv(Sinnoh_prequel):
     ITEM_PATH = 'bin/pml/item'
     TEXT_PATH = 'bin/message/English/common'
     TEXT_SCRIPT_PATH = 'bin/message/English/script'
-    TRDATA_PATH = 'bin/trainer'
+    TRAINER_PATH = 'bin/trainer'
     ENCOUNTER_PATH = 'world/data/encount/pokedata/encount_poke_data'
     RAID_PATH = 'world/data/raid/raid_enemy_table_array'
     FOOD_BUF_PATH = 'world/data/cooking/cooking_buf_data'
     FOOD_RECIPE_PATH = 'world/data/cooking/cooking_recipe_data'
     OUTBREAK_PATH = 'world/data/outbreak/delivery_outbreak_poke_data'
-    SHOP_PATH = 'bin/appli/shop/shop_data'
+    # ── Shop paths (from pkNX GameDumperSV.cs) ──────────────────────
+    SHOP_PATH = 'world/data/ui/shop/friendlyshop/friendlyshop_data/friendlyshop_data_array.bfbs'
+    SHOP_LINEUP_PATH = 'world/data/ui/shop/friendlyshop/friendlyshop_lineup_data/friendlyshop_lineup_data_array.bfbs'
+    SHOP_MASTER_PATH = 'world/data/ui/shop/shop_data/shop_data_array.bfbs'
+    TM_SHOP_PATH = 'world/data/ui/shop/shop_wazamachine/shop_wazamachine_data/shop_wazamachine_data_array.bfbs'
+    DRESSUP_SHOP_PATH = 'world/data/ui/shop/dressup_shop/dressup_shop_data/dressup_shop_data_array.bfbs'
+    DRESSUP_CATEGORY_PATH = 'world/data/ui/shop/dressup_shop/dressup_category_data/dressup_category_data_array.bfbs'
+    DRESSUP_ITEM_PATH = 'world/data/ui/shop/dressup_shop/dressup_item_data/dressup_item_data_array.bfbs'
+    RESTAURANT_SHOP_PATH = 'world/data/ui/shop/shop_restaurant/restaurant_shopdata/restaurant_shopdata_array.bfbs'
+    RESTAURANT_MENU_PATH = 'world/data/ui/shop/shop_restaurant/restaurant_menudata/restaurant_menudata_array.bfbs'
+    RESTAURANT_BUF_PATH = 'world/data/ui/shop/shop_restaurant/restaurant_bufdata/restaurant_bufdata_array.bfbs'
+
+    # ── DLC paths (from pkNX GameDumperSV.cs) ────────────────────────
+    # DLC items
+    DLC_ITEM_PATH = 'world/data/ui/dlc_item_data/dlc_item_group/dlc_item_group_array.bfbs'
+    # Kitakami (Teal Mask) raids
+    KITAKAMI_RAID_01 = 'world/data/raid/su1_raid_enemy_01/su1_raid_enemy_01_array.bfbs'
+    KITAKAMI_RAID_02 = 'world/data/raid/su1_raid_enemy_02/su1_raid_enemy_02_array.bfbs'
+    KITAKAMI_RAID_03 = 'world/data/raid/su1_raid_enemy_03/su1_raid_enemy_03_array.bfbs'
+    KITAKAMI_RAID_04 = 'world/data/raid/su1_raid_enemy_04/su1_raid_enemy_04_array.bfbs'
+    KITAKAMI_RAID_05 = 'world/data/raid/su1_raid_enemy_05/su1_raid_enemy_05_array.bfbs'
+    KITAKAMI_RAID_06 = 'world/data/raid/su1_raid_enemy_06/su1_raid_enemy_06_array.bfbs'
+    # Blueberry (Indigo Disk) raids
+    BLUEBERRY_RAID_01 = 'world/data/raid/su2_raid_enemy_01/su2_raid_enemy_01_array.bfbs'
+    BLUEBERRY_RAID_02 = 'world/data/raid/su2_raid_enemy_02/su2_raid_enemy_02_array.bfbs'
+    BLUEBERRY_RAID_03 = 'world/data/raid/su2_raid_enemy_03/su2_raid_enemy_03_array.bfbs'
+    BLUEBERRY_RAID_04 = 'world/data/raid/su2_raid_enemy_04/su2_raid_enemy_04_array.bfbs'
+    BLUEBERRY_RAID_05 = 'world/data/raid/su2_raid_enemy_05/su2_raid_enemy_05_array.bfbs'
+    BLUEBERRY_RAID_06 = 'world/data/raid/su2_raid_enemy_06/su2_raid_enemy_06_array.bfbs'
+    # DLC maps
+    KITAKAMI_DEST_PATH = 'world/data/ui/ymap/ymap_destination_dlc1_data/ymap_destination_dlc1_data_array.bfbs'
+    BLUEBERRY_DEST_PATH = 'world/data/ui/ymap/ymap_destination_dlc2_data/ymap_destination_dlc2_data_array.bfbs'
+    KITAKAMI_PLACES_PATH = 'world/data/ui/ymap/ymap_place_name_dlc1_data/ymap_place_name_dlc1_data_array.bfbs'
+    BLUEBERRY_PLACES_PATH = 'world/data/ui/ymap/ymap_place_name_dlc2_data/ymap_place_name_dlc2_data_array.bfbs'
+    # DLC pokedex
+    KITAKAMI_DEX_BLACKLIST = 'world/data/ui/pokedex/blacklist_dlc1/blacklist_dlc1_array.bfbs'
+    BLUEBERRY_DEX_BLACKLIST = 'world/data/ui/pokedex/blacklist_dlc2/blacklist_dlc2_array.bfbs'
+    KITAKAMI_DEX_DISTRIB = 'world/data/ui/pokedex/distribution_data_dlc1/distribution_data_dlc1_array.bfbs'
+    BLUEBERRY_DEX_DISTRIB = 'world/data/ui/pokedex/distribution_data_dlc2/distribution_data_dlc2_array.bfbs'
+    KITAKAMI_DEX_MEMO = 'world/data/ui/pokedex/memo_poke_data_dlc1/memo_poke_data_dlc1_array.bfbs'
+    BLUEBERRY_DEX_MEMO = 'world/data/ui/pokedex/memo_poke_data_dlc2/memo_poke_data_dlc2_array.bfbs'
+    KITAKAMI_DEX_REWARD = 'world/data/ui/pokedex/reward_data_dlc1/reward_data_dlc1_array.bfbs'
+    BLUEBERRY_DEX_REWARD = 'world/data/ui/pokedex/reward_data_dlc2/reward_data_dlc2_array.bfbs'
 
     # -- Removed / restructured from SWSH --
     TRPOKE_PATH = None
@@ -48,6 +104,29 @@ class Paldea_sv(Sinnoh_prequel):
     DYNAMAX_PATH = None
     NEST_DATA_PATH = None
     SYMBOL_BEHAVE_PATH = None
+    BATTLE_TOWER_POKE_PATH = None
+    BATTLE_TOWER_TRAINER_PATH = None
+    RENTAL_PATH = None
+    GIFT_PATH = 'bin/pokemon/data/poke_add.bin'
+    STATIC_ENCOUNTER_PATH = None
+    MOVE_SHOP_PATH = None
+    GINKGO_ITEM_PATH = None
+    GINKGO_TABLE_PATH = None
+    MEGA_EVO_PATH = None
+    WILD_PATH_E = None
+    WILD_PATH_P = None
+    TRADE_PATH = None
+    BATTLE_DROPS_PATH = None
+    FIELD_DROPS_PATH = None
+    CRAFT_PATH = None
+    DEX_RESEARCH_PATH = None
+    NEW_OUTBREAK_GROUP_PATH = None
+    NEW_OUTBREAK_LOTTERY_PATH = None
+    POKE_MISC_PATH = None
+    SHINY_ROLLS_PATH = None
+    THROWABLE_PARAM_PATH = None
+    THROW_PARAM_PATH = None
+    TRAINER_MAP = None
 
 
     FOOD_SKILL = ('None', 'Egg Power', 'Catching Power', 'EXP Power', 'Item Drop',
@@ -58,7 +137,243 @@ class Paldea_sv(Sinnoh_prequel):
     CLASS_MAJOR = {1: 'Legendary', 2: 'Sub-Legendary', 3: 'Mythical'}
     CLASS_MINOR = {1: 'Ultra Beast', 2: 'Paradox (Past)', 4: 'Paradox (Future)', 8: 'Mega Evolution'}
 
+    def get_narc(self, narc_path):
+        """Trinity-aware file reader. Reads from trinity_index, unpacks .trpak files."""
+        key = narc_path
+        if key not in self._narc_cache:
+            from leswitch import read_trinity_file
+            ti = getattr(self, 'trinity_index', None)
+            trpfs = getattr(self, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+            files = []
+            ahtb_list = []
+            if ti:
+                for tpath in sorted(ti.keys()):
+                    if not (tpath.startswith(narc_path.rstrip('/')) or tpath == narc_path):
+                        continue
+                    subfiles = read_trinity_file(self.switch_rom, trpfs, ti, tpath)
+                    if subfiles:
+                        for f in subfiles:
+                            if f[:4] == b'AHTB':
+                                ahtb_list.append(f)
+                            else:
+                                files.append(f)
+            if not files:
+                # Hash fallback for exact paths not in plaintext index
+                from leswitch import _fnv1a_64, _unpack_trpak
+                np = narc_path.strip('/')
+                h = _fnv1a_64(np)
+                # Check TRPFS direct hashes (9.8K .trpak containers)
+                h2o = ti.get('__hash_to_offset__') if ti else None
+                o2s = ti.get('__offset_to_size__') if ti else None
+                if h2o and o2s:
+                    off = h2o.get(h)
+                    if off is not None:
+                        sz = o2s.get(off, 0)
+                        trpfs_off = self.switch_rom.files[trpfs][0]
+                        raw = self.switch_rom._read(trpfs_off + off, sz)
+                        if np.endswith('.trpak'):
+                            result = _unpack_trpak(raw)
+                            if result:
+                                for f in result:
+                                    if f[:4] == b'AHTB':
+                                        ahtb_list.append(f)
+                                    else:
+                                        files.append(f)
+                        else:
+                            files = [raw]
+                # Check inner file hashes (178K files inside .trpak containers)
+                if not files:
+                    ihc = ti.get('__inner_hash_to_container__') if ti else None
+                    if ihc:
+                        cinfo = ihc.get(h)
+                        if cinfo is not None:
+                            coff, csz, sub_idx = cinfo
+                            trpfs_off = self.switch_rom.files[trpfs][0]
+                            raw = self.switch_rom._read(trpfs_off + coff, csz)
+                            result = _unpack_trpak(raw)
+                            if result:
+                                for f in result:
+                                    if f[:4] == b'AHTB':
+                                        ahtb_list.append(f)
+                                data = [f for f in result if f[:4] != b'AHTB']
+                                if sub_idx < len(data):
+                                    files = [data[sub_idx]]
+                                else:
+                                    files = data
+                if not files:
+                    return super().get_narc(narc_path)
+            # Enrich __hash_to_path__: scan unpacked files for path strings
+            h2p = ti.get('__hash_to_path__') if ti else None
+            ihc = ti.get('__inner_hash_to_container__') if ti else None
+            if h2p is not None and ihc:
+                import re
+                _pat = re.compile(rb'[a-z][a-z0-9_]*(?:/[a-z0-9_]+)+\.\w+')
+                for f in files + ahtb_list:
+                    for m in _pat.finditer(f):
+                        ps = m.group().decode('ascii', errors='ignore')
+                        h = _fnv1a_64(ps)
+                        if h in ihc and h not in h2p:
+                            h2p[h] = ps
+            class _SwitchNarc:
+                pass
+            obj = _SwitchNarc()
+            obj.files = files
+            self._narc_cache[key] = obj
+            if ahtb_list:
+                self._ahtb_cache[key] = ahtb_list
+        return self._narc_cache[key]
+
+    def read_file(self, path):
+        """Trinity-aware single file read. Check sketch cache, then trinity_index (plaintext + hash), fall back to RomFS."""
+        p = path.strip('/')
+        if ':' in p:
+            p = p.split(':')[0]
+        sc = getattr(self, '_sketch_cache', None)
+        if sc and p in sc:
+            return sc[p]
+        ti = getattr(self, 'trinity_index', None)
+        if ti:
+            if p in ti:
+                from leswitch import read_trinity_file
+                trpfs = getattr(self, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+                result = read_trinity_file(self.switch_rom, trpfs, ti, p)
+                if result:
+                    return result[0]
+            else:
+                # Hash fallback: 168K inner files only reachable by FNV1a-64
+                from leswitch import _fnv1a_64, _unpack_trpak
+                h = _fnv1a_64(p)
+                # Check TRPFS direct hashes (9.8K .trpak containers)
+                h2o = ti.get('__hash_to_offset__')
+                o2s = ti.get('__offset_to_size__')
+                if h2o and o2s:
+                    off = h2o.get(h)
+                    if off is not None:
+                        sz = o2s.get(off, 0)
+                        trpfs = getattr(self, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+                        trpfs_off = self.switch_rom.files[trpfs][0]
+                        raw = self.switch_rom._read(trpfs_off + off, sz)
+                        if p.endswith('.trpak'):
+                            result = _unpack_trpak(raw)
+                            if result:
+                                return result[0]
+                        return raw
+                # Check inner file hashes (178K files inside .trpak containers)
+                ihc = ti.get('__inner_hash_to_container__')
+                if ihc:
+                    cinfo = ihc.get(h)
+                    if cinfo is not None:
+                        coff, csz, sub_idx = cinfo
+                        trpfs = getattr(self, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+                        trpfs_off = self.switch_rom.files[trpfs][0]
+                        raw = self.switch_rom._read(trpfs_off + coff, csz)
+                        result = _unpack_trpak(raw)
+                        if result:
+                            files = [f for f in result if f[:4] != b'AHTB']
+                            if sub_idx < len(files):
+                                return files[sub_idx]
+        return super().read_file(path)
+
+
+
+    def build_trainer_lookup(self):
+        """Build 3-hop trainer lookup: trname_key -> NPC_ids -> TrIds -> trdata indices.
+        Stores _trid_idx and _trname_to_indices on self."""
+        # Map 3: trdata TrId -> array index
+        _tdb = self.read_file(getattr(self, 'TRAINER_PATH', ''))
+        if not _tdb or len(_tdb) <= 12:
+            return
+        _trt = fb_root(_tdb)
+        _tvt, _tto = fb_table(_tdb, _trt)
+        _tvf = _vt_off(_tvt, 0)
+        if not _tvf:
+            return
+        _tcnt, _tdoff = fb_vector(_tdb, _tto, _tvf)
+        _idx = {}
+        for _i in range(_tcnt):
+            _teop = _tdoff + _i * 4
+            _terel = struct.unpack_from('<I', _tdb, _teop)[0]
+            _tepos = _teop + _terel
+            _tevt, _teto = fb_table(_tdb, _tepos)
+            _ttrid = fb_str(_tdb, _tevt, _teto, 0) or ''
+            if _ttrid:
+                _idx[_ttrid] = _i
+        self._trid_idx = _idx
+
+        # Map 1: event battle NPC_id -> set(TrIds)
+        _evb = self.read_file('ik_event/bin/event_trainer_battle_data/trainer_btl_data_global.bin')
+        _npc_trids = {}
+        if _evb and len(_evb) > 12:
+            _er = fb_root(_evb)
+            _evt, _eto = fb_table(_evb, _er)
+            _evf = _vt_off(_evt, 0)
+            if _evf:
+                _ecnt, _edoff = fb_vector(_evb, _eto, _evf)
+                for _i in range(_ecnt):
+                    _eop = _edoff + _i * 4
+                    _erel = struct.unpack_from('<I', _evb, _eop)[0]
+                    _epos = _eop + _erel
+                    _eevt, _eeto = fb_table(_evb, _epos)
+                    _etrid = fb_str(_evb, _eevt, _eeto, 1)
+                    _enpc = fb_str(_evb, _eevt, _eeto, 2)
+                    if _etrid and _enpc:
+                        _npc_trids.setdefault(_enpc, set()).add(_etrid)
+
+        # Map 2: NPC asset trname_key -> set(NPC AssetIds)
+        _npcd = self.read_file('world/ik_data/field/npc/npc_asset_data/npc_asset_data/npc_asset_data.bin')
+        _trname_npcs = {}
+        if _npcd and len(_npcd) > 12:
+            _nr = fb_root(_npcd)
+            _nvt, _nto = fb_table(_npcd, _nr)
+            _nf0 = _vt_off(_nvt, 0)
+            if _nf0:
+                _ncnt, _ndoff = fb_vector(_npcd, _nto, _nf0)
+                for _i in range(_ncnt):
+                    _nop = _ndoff + _i * 4
+                    _nrel = struct.unpack_from('<I', _npcd, _nop)[0]
+                    _npos = _nop + _nrel
+                    _naevt, _naeto = fb_table(_npcd, _npos)
+                    _aid = fb_str(_npcd, _naevt, _naeto, 0)
+                    if not _aid:
+                        continue
+                    _nif = _vt_off(_naevt, 1)
+                    if not _nif:
+                        continue
+                    _nicnt, _nidoff = fb_vector(_npcd, _naeto, _nif)
+                    for _j in range(_nicnt):
+                        _niop = _nidoff + _j * 4
+                        _nirel = struct.unpack_from('<I', _npcd, _niop)[0]
+                        _nipos = _niop + _nirel
+                        _nivt, _nito = fb_table(_npcd, _nipos)
+                        _nm = fb_str(_npcd, _nivt, _nito, 1)
+                        if _nm and len(_nm) < 64 and _nm.isascii():
+                            _trname_npcs.setdefault(_nm, set()).add(_aid)
+
+        # Composite: trname_key -> sorted list of trdata indices
+        _t2i = {}
+        _trid_idx = self._trid_idx
+        for _key, _npc_ids in _trname_npcs.items():
+            _indices = set()
+            if _key in _trid_idx:
+                _indices.add(_trid_idx[_key])
+            for _nid in _npc_ids:
+                for _tid in _npc_trids.get(_nid, set()):
+                    if _tid in _trid_idx:
+                        _indices.add(_trid_idx[_tid])
+            if _indices:
+                _t2i[_key] = sorted(_indices)
+        self._trname_to_indices = _t2i
+        # Reverse: index -> list of trname_keys (for decode_trainer display name)
+        _i2t = {}
+        for _key, _idxs in _t2i.items():
+            for _i in _idxs:
+                _i2t.setdefault(_i, []).append(_key)
+        self._idx_to_trname = _i2t
+        # TrID -> index reverse (for dowse to show TrIDs)
+        self._idx_to_trid = {v: k for k, v in _idx.items()}
+
     def decode_personal(self, data, file_idx, text_tables, tm_table=None):
+
         """Decode SV personal data (FlatBuffer with sub-tables).
         SV schema has KitakamiDex/BlueberryDex at fields 3-4 (removed in ZA),
         shifting all subsequent fields +2 vs ZA."""
@@ -96,41 +411,42 @@ class Paldea_sv(Sinnoh_prequel):
         present = bool(present) if present is not None else True
 
         # Field 2: Dex (nullable struct)
-        # Field 3: KitakamiDex, Field 4: BlueberryDex (SV-only)
-        kitakami_dex = fb_field(data, vt, to, 3, '<H') or 0
-        blueberry_dex = fb_field(data, vt, to, 4, '<H') or 0
-
-        # Fields 5-6: Types (ZA: 3-4)
-        type1 = fb_field(data, vt, to, 5, '<B') or 0
-        type2 = fb_field(data, vt, to, 6, '<B') or 0
+        # Fields 3-4: KitakamiDex, BlueberryDex (SV-only, removed in ZA)
+        _ps = self.PERSONAL_FIELD_SHIFT
+        if _ps == 0:  # SV has DLC dex fields
+            kitakami_dex = fb_field(data, vt, to, 3, '<H') or 0
+            blueberry_dex = fb_field(data, vt, to, 4, '<H') or 0
+        # Types
+        type1 = fb_field(data, vt, to, 5 + _ps, '<B') or 0
+        type2 = fb_field(data, vt, to, 6 + _ps, '<B') or 0
         # Fields 7-9: Abilities (ZA: 5-7)
-        ab1 = fb_field(data, vt, to, 7, '<H') or 0
-        ab2 = fb_field(data, vt, to, 8, '<H') or 0
-        abH = fb_field(data, vt, to, 9, '<H') or 0
+        ab1 = fb_field(data, vt, to, 7 + _ps, '<H') or 0
+        ab2 = fb_field(data, vt, to, 8 + _ps, '<H') or 0
+        abH = fb_field(data, vt, to, 9 + _ps, '<H') or 0
         # Field 10: EXPGrowth, Field 11: CatchRate (ZA: 8-9)
-        exp_growth = fb_field(data, vt, to, 10, '<B') or 0
-        catch_rate = fb_field(data, vt, to, 11, '<B') or 0
+        exp_growth = fb_field(data, vt, to, 10 + _ps, '<B') or 0
+        catch_rate = fb_field(data, vt, to, 11 + _ps, '<B') or 0
         # Field 12: Gender struct (ZA: 10)
-        gender_off = fb_field(data, vt, to, 12, '<H')
+        gender_off = fb_field(data, vt, to, 12 + _ps, '<H')
         gender_group = gender_ratio = 0
         if gender_off:
             g_base = to + gender_off
             gender_group = data[g_base]
             gender_ratio = data[g_base + 1]
         # Fields 13-14: EggGroups (ZA: 11-12)
-        egg1 = fb_field(data, vt, to, 13, '<B') or 0
-        egg2 = fb_field(data, vt, to, 14, '<B') or 0
+        egg1 = fb_field(data, vt, to, 13 + _ps, '<B') or 0
+        egg2 = fb_field(data, vt, to, 14 + _ps, '<B') or 0
         # Field 15: Hatch struct (ZA: 13)
         # Field 16: HatchCycles, Field 17: BaseFriendship (ZA: 14-15)
-        hatch_cycles = fb_field(data, vt, to, 16, '<B') or 0
-        friendship = fb_field(data, vt, to, 17, '<B') or 0
+        hatch_cycles = fb_field(data, vt, to, 16 + _ps, '<B') or 0
+        friendship = fb_field(data, vt, to, 17 + _ps, '<B') or 0
         # Field 18: BaseEXPAddend (ZA: 16)
-        exp_addend = fb_field(data, vt, to, 18, '<h') or 0
+        exp_addend = fb_field(data, vt, to, 18 + _ps, '<h') or 0
         # Field 19: EvoStage (ZA: 17)
-        evo_stage = fb_field(data, vt, to, 19, '<B') or 0
+        evo_stage = fb_field(data, vt, to, 19 + _ps, '<B') or 0
         # Field 20: IsTypeChangeDisallowed (ZA: 18)
         # Field 21: EVYield struct (ZA: 19)
-        ev_off = fb_field(data, vt, to, 21, '<H')
+        ev_off = fb_field(data, vt, to, 21 + _ps, '<H')
         evs = []
         if ev_off:
             ev_base = to + ev_off
@@ -138,7 +454,7 @@ class Paldea_sv(Sinnoh_prequel):
                 val = data[ev_base + i]
                 if val: evs.append(f"+{val} {stat}")
         # Field 22: Base stats struct (ZA: 20)
-        stat_off = fb_field(data, vt, to, 22, '<H')
+        stat_off = fb_field(data, vt, to, 22 + _ps, '<H')
         hp = atk = dfn = spa = spd = spe = 0
         if stat_off:
             s = to + stat_off
@@ -188,7 +504,7 @@ class Paldea_sv(Sinnoh_prequel):
             out.append(f"Classification: {' / '.join(tags)}")
 
         # Field 23: Evolutions (ZA: 21)
-        evo_voff = fb_field(data, vt, to, 23, '<H')
+        evo_voff = fb_field(data, vt, to, 23 + _ps, '<H')
         if evo_voff:
             count, doff = fb_vector(data, to, evo_voff)
             for i in range(count):
@@ -203,38 +519,22 @@ class Paldea_sv(Sinnoh_prequel):
                 out.append(f"  Evo: {tname}{form_str} (method {method}, arg {arg}, lv {level})")
 
         # Field 24: TechnicalMachine (ZA: 22)
-        tm_voff = fb_field(data, vt, to, 24, '<H')
-        if tm_voff:
-            count, doff = fb_vector(data, to, tm_voff)
-            tms = []
-            for i in range(count):
-                mid = struct.unpack_from('<H', data, doff + i * 2)[0]
-                mname = moves_list[mid] if mid < len(moves_list) else f"move#{mid}"
-                tms.append(mname)
-            if tms:
-                out.append(f"TMs ({len(tms)}): {' / '.join(tms)}")
+        tm_ids = fb_scalars(data, vt, to, 24 + _ps)
+        if tm_ids:
+            tms = [moves_list[m] if m < len(moves_list) else f"move#{m}" for m in tm_ids]
+            out.append(f"TMs ({len(tms)}): {' / '.join(tms)}")
 
         # Field 25: EggMoves (ZA: 23)
-        egg_voff = fb_field(data, vt, to, 25, '<H')
-        if egg_voff:
-            count, doff = fb_vector(data, to, egg_voff)
-            eggs = []
-            for i in range(count):
-                mid = struct.unpack_from('<H', data, doff + i * 2)[0]
-                eggs.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
-            if eggs:
-                out.append(f"Egg Moves: {' / '.join(eggs)}")
+        egg_ids = fb_scalars(data, vt, to, 25 + _ps)
+        if egg_ids:
+            eggs = [moves_list[m] if m < len(moves_list) else f"move#{m}" for m in egg_ids]
+            out.append(f"Egg Moves: {' / '.join(eggs)}")
 
         # Field 26: ReminderMoves (ZA: 24)
-        rem_voff = fb_field(data, vt, to, 26, '<H')
-        if rem_voff:
-            count, doff = fb_vector(data, to, rem_voff)
-            rems = []
-            for i in range(count):
-                mid = struct.unpack_from('<H', data, doff + i * 2)[0]
-                rems.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
-            if rems:
-                out.append(f"Reminder: {' / '.join(rems)}")
+        rem_ids = fb_scalars(data, vt, to, 26)
+        if rem_ids:
+            rems = [moves_list[m] if m < len(moves_list) else f"move#{m}" for m in rem_ids]
+            out.append(f"Reminder: {' / '.join(rems)}")
 
         # Field 27: Learnset (ZA: 25)
         learn_voff = fb_field(data, vt, to, 27, '<H')
@@ -276,23 +576,23 @@ class Paldea_sv(Sinnoh_prequel):
         category = fb_field(data, vt, to, 4, '<B') or 0
         power = fb_field(data, vt, to, 5, '<B') or 0
         accuracy = fb_field(data, vt, to, 6, '<B') or 0
-        pp = fb_field(data, vt, to, 7, '<B') or 0
-        priority = fb_field(data, vt, to, 8, '<b') or 0
-        hit_max = fb_field(data, vt, to, 9, '<B') or 0
-        hit_min = fb_field(data, vt, to, 10, '<B') or 0
-        inflict_off = fb_field(data, vt, to, 11, '<H')
+        pp = fb_field(data, vt, to, 7 + _ps, '<B') or 0
+        priority = fb_field(data, vt, to, 8 + _ps, '<b') or 0
+        hit_max = fb_field(data, vt, to, 9 + _ps, '<B') or 0
+        hit_min = fb_field(data, vt, to, 10 + _ps, '<B') or 0
+        inflict_off = fb_field(data, vt, to, 11 + _ps, '<H')
         inflict_val = inflict_chance = 0
         if inflict_off:
             ib = to + inflict_off
             inflict_val = struct.unpack_from('<H', data, ib)[0]
             inflict_chance = data[ib + 2]
-        crit = fb_field(data, vt, to, 12, '<B') or 0
-        flinch = fb_field(data, vt, to, 13, '<B') or 0
-        effect_seq = fb_field(data, vt, to, 14, '<H') or 0
-        recoil = fb_field(data, vt, to, 15, '<b') or 0
-        self_heal = fb_field(data, vt, to, 16, '<b') or 0
-        dmg_heal = fb_field(data, vt, to, 17, '<B') or 0
-        target = fb_field(data, vt, to, 18, '<B') or 0
+        crit = fb_field(data, vt, to, 12 + _ps, '<B') or 0
+        flinch = fb_field(data, vt, to, 13 + _ps, '<B') or 0
+        effect_seq = fb_field(data, vt, to, 14 + _ps, '<H') or 0
+        recoil = fb_field(data, vt, to, 15 + _ps, '<b') or 0
+        self_heal = fb_field(data, vt, to, 16 + _ps, '<b') or 0
+        dmg_heal = fb_field(data, vt, to, 17 + _ps, '<B') or 0
+        target = fb_field(data, vt, to, 18 + _ps, '<B') or 0
 
         cat_str = self.CATEGORY_NAMES[category]
         move_name = moves_list[move_id] if move_id < len(moves_list) else f"#{move_id}"
@@ -330,7 +630,8 @@ class Paldea_sv(Sinnoh_prequel):
     def decode_trainer(self, data, file_idx, text_tables):
         """Decode SV trainer (TrDataMain FlatBuffer).
         SV schema: TrId/TrNameLabel/TrainerType strings, BattleType, ChangeGem (Tera),
-        Poke1-6 at fields 8-13, AI at 14-21."""
+        Poke1-6 at fields 8-13, AI at 14-21.
+        Handles both single-entry and array-indexed (trdata_array:N) FlatBuffers."""
         if len(data) < 12:
             return None
 
@@ -340,34 +641,37 @@ class Paldea_sv(Sinnoh_prequel):
 
         root = fb_root(data)
         vt, to = fb_table(data, root)
+        # Array-indexed: extract entry N from FlatBuffer vector
+        _tf = struct.unpack_from('<H', vt, 4)[0] if len(vt) > 5 else 0
+        if _tf and not fb_str(data, vt, to, 0):
+            cnt, doff = fb_vector(data, to, _tf)
+            if file_idx < cnt:
+                _eop = doff + file_idx * 4
+                _erel = struct.unpack_from('<I', data, _eop)[0]
+                vt, to = fb_table(data, _eop + _erel)
 
-        tr_id_off = fb_field(data, vt, to, 0, '<H')
-        tr_id = fb_string(data, to, tr_id_off) if tr_id_off else "?"
-        tr_name_off = fb_field(data, vt, to, 1, '<H')
-        tr_name = fb_string(data, to, tr_name_off) if tr_name_off else ""
-        tr_type_off = fb_field(data, vt, to, 2, '<H')
-        tr_type = fb_string(data, to, tr_type_off) if tr_type_off else ""
+        tr_id = fb_str(data, vt, to, 0) or "?"
+        tr_name = fb_str(data, vt, to, 1) or ""
+        tr_type = fb_str(data, vt, to, 2) or ""
         is_strong = fb_field(data, vt, to, 3, '<B') or 0
         battle_type = fb_field(data, vt, to, 4, '<B') or 0
         data_type = fb_field(data, vt, to, 5, '<B') or 0
         money_rate = fb_field(data, vt, to, 6, '<B') or 0
-        change_gem = fb_field(data, vt, to, 7, '<B') or 0
+        change_gem = fb_field(data, vt, to, 7 + _ps, '<B') or 0
 
         battle_str = self.BATTLE_TYPES[battle_type] if battle_type < len(self.BATTLE_TYPES) else f'type#{battle_type}'
-        out = [f"Trainer: {tr_id} | {tr_type} {tr_name} | {battle_str} | Money x{money_rate}"]
+        out = [f"Trainer: {tr_id} | {tr_type} {tr_name} | {battle_str}"]
         if is_strong:
             out.append("Strong Trainer")
         if change_gem:
             out.append("Terastallizes")
 
+        highest_level = 0
         # Poke1-6 at fields 8-13 (PokeDataBattle sub-tables, same as ZA)
         for slot in range(6):
-            poke_off = fb_field(data, vt, to, 8 + slot, '<H')
-            if not poke_off:
+            pvt, pto = fb_sub(data, vt, to, 8 + slot)
+            if not pvt:
                 continue
-            abs_off = to + poke_off
-            sub_off = abs_off + struct.unpack_from('<I', data, abs_off)[0]
-            pvt, pto = fb_table(data, sub_off)
             dev = fb_field(data, pvt, pto, 0, '<H') or 0
             if dev == 0:
                 continue
@@ -375,6 +679,7 @@ class Paldea_sv(Sinnoh_prequel):
             sex = fb_field(data, pvt, pto, 2, '<B') or 0
             item = fb_field(data, pvt, pto, 3, '<i') or 0
             level = fb_field(data, pvt, pto, 4, '<i') or 0
+            if level > highest_level: highest_level = level
 
             sp_name = species_list[dev] if dev < len(species_list) else f"#{dev}"
             form_str = f"-{form}" if form else ""
@@ -383,17 +688,17 @@ class Paldea_sv(Sinnoh_prequel):
 
             move_names = []
             for mi in range(4):
-                m_off = fb_field(data, pvt, pto, 6 + mi, '<H')
-                if m_off:
-                    m_abs = pto + m_off
-                    m_sub = m_abs + struct.unpack_from('<I', data, m_abs)[0]
-                    mvt, mto = fb_table(data, m_sub)
+                mvt, mto = fb_sub(data, pvt, pto, 6 + mi)
+                if mvt:
                     mid = fb_field(data, mvt, mto, 0, '<H') or 0
                     if mid:
                         move_names.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
 
             moves_str = f" [{' / '.join(move_names)}]" if move_names else ""
             out.append(f"  {slot+1}. {sp_name}{form_str} Lv{level}{item_str}{moves_str}")
+
+        if money_rate and highest_level:
+            out.append(f"Prize: \u00a5{money_rate * 4 * highest_level:,}")
 
         # AI flags (fields 14-21)
         ai_names = ['Basic', 'High', 'Expert', 'Double', 'Raid', 'Weak', 'Item', 'Change']
@@ -405,6 +710,28 @@ class Paldea_sv(Sinnoh_prequel):
 
 
     # ── decode_encounters ─────────────────────────────────────────
+
+    def iter_encounters(self):
+        try:
+            data = self.read_file(self.ENCOUNTER_PATH)
+        except Exception:
+            return
+        if not data or len(data) < 12: return
+        root = fb_root(data)
+        vt, to = fb_table(data, root)
+        vo = _vt_off(vt, 0)
+        if not vo: return
+        count, doff = fb_vector(data, to, vo)
+        for i in range(count):
+            rel = struct.unpack_from('<I', data, doff + i * 4)[0]
+            sv, st = fb_table(data, doff + i * 4 + rel)
+            species = fb_field(data, sv, st, 0, '<i') or 0
+            form = fb_field(data, sv, st, 2, '<b') or 0
+            minlv = fb_field(data, sv, st, 3, '<h') or 0
+            maxlv = fb_field(data, sv, st, 4, '<h') or 0
+            area = fb_str(data, sv, st, 14) or 'Wild'
+            if species:
+                yield (area, species, form, minlv, maxlv, {'location': area})
 
     def decode_encounters(self, data, file_idx, text_tables, path='', **kwargs):
         """Decode SV encounter data (EncountPokeData FlatBuffer).
@@ -432,18 +759,16 @@ class Paldea_sv(Sinnoh_prequel):
                 biomes.append(f"biome#{biome}:{blot}")
 
         # Area/Location strings (fields 14-15)
-        area_off = fb_field(data, vt, to, 14, '<H')
-        area = fb_string(data, to, area_off) if area_off else ""
-        loc_off = fb_field(data, vt, to, 15, '<H')
-        location = fb_string(data, to, loc_off) if loc_off else ""
+        area = fb_str(data, vt, to, 14 + _ps) or ""
+        location = fb_str(data, vt, to, 15 + _ps) or ""
 
-        min_h = fb_field(data, vt, to, 16, '<i') or 0
-        max_h = fb_field(data, vt, to, 17, '<i') or 0
+        min_h = fb_field(data, vt, to, 16 + _ps, '<i') or 0
+        max_h = fb_field(data, vt, to, 17 + _ps, '<i') or 0
 
         # Band/horde data (fields 21-25)
-        band_rate = fb_field(data, vt, to, 21, '<h') or 0
-        band_type = fb_field(data, vt, to, 22, '<i') or 0
-        band_poke = fb_field(data, vt, to, 23, '<i') or 0
+        band_rate = fb_field(data, vt, to, 21 + _ps, '<h') or 0
+        band_type = fb_field(data, vt, to, 22 + _ps, '<i') or 0
+        band_poke = fb_field(data, vt, to, 23 + _ps, '<i') or 0
 
         outbreak_lot = fb_field(data, vt, to, 26, '<B') or 0
 
@@ -481,19 +806,18 @@ class Paldea_sv(Sinnoh_prequel):
 
         item_id = fb_field(data, vt, to, 0, '<i') or 0
         item_type = fb_field(data, vt, to, 1, '<i') or 0
-        icon_off = fb_field(data, vt, to, 2, '<H')
-        icon_name = fb_string(data, to, icon_off) if icon_off else f"item#{item_id}"
+        icon_name = fb_str(data, vt, to, 2) or f"item#{item_id}"
         price = fb_field(data, vt, to, 3, '<i') or 0
         bp = fb_field(data, vt, to, 4, '<i') or 0
         equip_effect = fb_field(data, vt, to, 5, '<i') or 0
         equip_power = fb_field(data, vt, to, 6, '<i') or 0
-        machine_waza = fb_field(data, vt, to, 12, '<i') or 0
-        sort_num = fb_field(data, vt, to, 13, '<i') or 0
-        item_group = fb_field(data, vt, to, 14, '<i') or 0
-        group_id = fb_field(data, vt, to, 15, '<i') or 0
-        pocket = fb_field(data, vt, to, 16, '<i') or 0
-        field_func = fb_field(data, vt, to, 17, '<i') or 0
-        battle_func = fb_field(data, vt, to, 18, '<i') or 0
+        machine_waza = fb_field(data, vt, to, 12 + _ps, '<i') or 0
+        sort_num = fb_field(data, vt, to, 13 + _ps, '<i') or 0
+        item_group = fb_field(data, vt, to, 14 + _ps, '<i') or 0
+        group_id = fb_field(data, vt, to, 15 + _ps, '<i') or 0
+        pocket = fb_field(data, vt, to, 16 + _ps, '<i') or 0
+        field_func = fb_field(data, vt, to, 17 + _ps, '<i') or 0
+        battle_func = fb_field(data, vt, to, 18 + _ps, '<i') or 0
 
         # Healing fields
         heal_hp = fb_field(data, vt, to, 40, '<i') or 0
@@ -528,12 +852,9 @@ class Paldea_sv(Sinnoh_prequel):
         vt, to = fb_table(data, root)
 
         # RaidEnemyTable has one field: Info (RaidEnemyInfo sub-table)
-        info_off = fb_field(data, vt, to, 0, '<H')
-        if not info_off:
+        ivt, ito = fb_sub(data, vt, to, 0)
+        if not ivt:
             return None
-        abs_off = to + info_off
-        sub_off = abs_off + struct.unpack_from('<I', data, abs_off)[0]
-        ivt, ito = fb_table(data, sub_off)
 
         rom_ver = fb_field(data, ivt, ito, 0, '<i') or 0
         raid_no = fb_field(data, ivt, ito, 1, '<i') or 0
@@ -544,38 +865,29 @@ class Paldea_sv(Sinnoh_prequel):
         capture_lv = fb_field(data, ivt, ito, 8, '<B') or 0
 
         # BossPokePara (field 9) — PokeDataBattle sub-table
-        poke_off = fb_field(data, ivt, ito, 9, '<H')
+        pvt, pto = fb_sub(data, ivt, ito, 9)
         sp_name = "?"
         form_str = ""
         level = 0
         move_names = []
-        if poke_off:
-            p_abs = ito + poke_off
-            p_sub = p_abs + struct.unpack_from('<I', data, p_abs)[0]
-            pvt, pto = fb_table(data, p_sub)
+        if pvt:
             dev = fb_field(data, pvt, pto, 0, '<H') or 0
             form = fb_field(data, pvt, pto, 1, '<h') or 0
             level = fb_field(data, pvt, pto, 4, '<i') or 0
             sp_name = species_list[dev] if dev < len(species_list) else f"#{dev}"
             form_str = f"-{form}" if form else ""
             for mi in range(4):
-                m_off = fb_field(data, pvt, pto, 6 + mi, '<H')
-                if m_off:
-                    m_abs = pto + m_off
-                    m_sub = m_abs + struct.unpack_from('<I', data, m_abs)[0]
-                    mvt, mto = fb_table(data, m_sub)
+                mvt, mto = fb_sub(data, pvt, pto, 6 + mi)
+                if mvt:
                     mid = fb_field(data, mvt, mto, 0, '<H') or 0
                     if mid:
                         move_names.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
 
         # BossDesc (field 11) — RaidBossData sub-table
-        boss_off = fb_field(data, ivt, ito, 11, '<H')
+        bvt, bto = fb_sub(data, ivt, ito, 11)
         hp_coef = 0
         shield_hp = shield_time = 0
-        if boss_off:
-            b_abs = ito + boss_off
-            b_sub = b_abs + struct.unpack_from('<I', data, b_abs)[0]
-            bvt, bto = fb_table(data, b_sub)
+        if bvt:
             hp_coef = fb_field(data, bvt, bto, 0, '<h') or 0
             shield_hp = fb_field(data, bvt, bto, 1, '<B') or 0
             shield_time = fb_field(data, bvt, bto, 2, '<B') or 0
@@ -607,18 +919,17 @@ class Paldea_sv(Sinnoh_prequel):
 
         # BufData: sandwich buff effects
         if path == self.FOOD_BUF_PATH:
-            bufid_off = fb_field(data, vt, to, 0, '<H')
-            bufid = fb_string(data, to, bufid_off) if bufid_off else f"buf#{file_idx}"
+            bufid = fb_str(data, vt, to, 0) or f"buf#{file_idx}"
             out = [f"Sandwich Buff: {bufid}"]
-                for slot in range(3):
-                    base = 1 + slot * 3
-                    skill = fb_field(data, vt, to, base, '<i') or 0
-                    level = fb_field(data, vt, to, base + 1, '<i') or 0
-                    poke_type = fb_field(data, vt, to, base + 2, '<i') or 0
-                    if skill:
-                        sname = self.FOOD_SKILL[skill] if skill < len(self.FOOD_SKILL) else f'skill#{skill}'
-                        out.append(f"  {sname} Lv{level} (type {poke_type})")
-                return "\n".join(out)
+            for slot in range(3):
+                base = 1 + slot * 3
+                skill = fb_field(data, vt, to, base, '<i') or 0
+                level = fb_field(data, vt, to, base + 1, '<i') or 0
+                poke_type = fb_field(data, vt, to, base + 2, '<i') or 0
+                if skill:
+                    sname = self.FOOD_SKILL[skill] if skill < len(self.FOOD_SKILL) else f'skill#{skill}'
+                    out.append(f"  {sname} Lv{level} (type {poke_type})")
+            return "\n".join(out)
 
         # RecipeData: recipe ingredients
         recipe_type = fb_field(data, vt, to, 0, '<i') or 0
@@ -658,13 +969,13 @@ class Paldea_sv(Sinnoh_prequel):
         max_lv = fb_field(data, vt, to, 5, '<h') or 0
 
         # Field 11: EnableRarePercentage, Field 12: RarePercentage
-        rare_enabled = fb_field(data, vt, to, 11, '<B') or 0
-        rare_pct = fb_field(data, vt, to, 12, '<f') or 0.0
+        rare_enabled = fb_field(data, vt, to, 11 + _ps, '<B') or 0
+        rare_pct = fb_field(data, vt, to, 12 + _ps, '<f') or 0.0
 
         # Field 15: EnableScaleRange, Fields 16-17: MinScale/MaxScale
-        scale_enabled = fb_field(data, vt, to, 15, '<B') or 0
-        min_scale = fb_field(data, vt, to, 16, '<h') or 0
-        max_scale = fb_field(data, vt, to, 17, '<h') or 0
+        scale_enabled = fb_field(data, vt, to, 15 + _ps, '<B') or 0
+        min_scale = fb_field(data, vt, to, 16 + _ps, '<h') or 0
+        max_scale = fb_field(data, vt, to, 17 + _ps, '<h') or 0
 
         sp_name = species_list[dev_id] if dev_id < len(species_list) else f"#{dev_id}"
         form_str = f"-{form}" if form else ""

@@ -2,7 +2,7 @@
 
 Inherits Johto_remake. Gen V: fully 3D, reboot dex, seasons, triple/rotation battles.
 """
-from Generations.Johto_remake import Johto_remake
+from Johto_remake import Johto_remake
 import struct
 
 
@@ -10,14 +10,38 @@ class Unova_prequel(Johto_remake):
     """Black/White. Gen V baseline."""
 
     GAME_CODES = ('IRB', 'IRA')
-    TITLES = ('POKÉMON BLACK', 'POKÉMON WHITE')
+    TITLES = ('Pokémon Black', 'Pokémon White')
     YEAR = 2011
 
     PLATFORM = 'Nintendo DS'
     GEN = 5
     CONTAINER = 'nds'
 
+    EVO_TRADE_FOR_SPECIES = 7
+    EVO_STONE = 8
+    EVO_ATK_GT_DEF = 9
+    EVO_ATK_EQ_DEF = 10
+    EVO_ATK_LT_DEF = 11
+    EVO_PERSONALITY_LO = 12
+    EVO_PERSONALITY_HI = 13
+    EVO_NINJASK = 14
+    EVO_SHEDINJA = 15
+    EVO_BEAUTY = 16
+    EVO_STONE_MALE = 17
+    EVO_STONE_FEMALE = 18
+    EVO_HOLD_ITEM_DAY = 19
+    EVO_HOLD_ITEM_NIGHT = 20
+    EVO_MOVE = 21
+    EVO_PARTY_SPECIES = 22
+    EVO_LEVEL_MALE = 23
+    EVO_LEVEL_FEMALE = 24
+    EVO_LEVEL_ELECTRIC = 25
+    EVO_LEVEL_MOSSY = 26
+    EVO_LEVEL_ICY = 27
+
     SPECIES_COUNT = 649
+
+    BATTLE_TYPES = ('Single', 'Double', 'Triple', 'Rotation', '', 'Multi')
 
     TEXT_PATH = 'a/0/0/2'
     PERSONAL_PATH = 'a/0/1/6'
@@ -25,10 +49,12 @@ class Unova_prequel(Johto_remake):
     EVOLUTION_PATH = 'a/0/1/9'
     EGG_MOVES_PATH = 'a/0/2/0'
     MOVE_DATA_PATH = 'a/0/2/1'
-    TRDATA_PATH = 'a/0/9/2'
+    TRAINER_PATH = 'a/0/9/2'
     TRPOKE_PATH = 'a/0/9/3'
     ITEM_PATH = 'a/0/2/4'
     ENCOUNTER_PATH = 'a/1/2/6'
+    BATTLE_TOWER_POKEMON_PATH = None
+    BATTLE_TOWER_TRAINERS_PATH = None
     SUBWAY_POKEMON_PATH = 'a/2/1/4'
     SUBWAY_TRAINERS_PATH = 'a/2/1/5'
 
@@ -36,15 +62,7 @@ class Unova_prequel(Johto_remake):
     MOVE_DATA_SIZE = 36
     EVOLUTION_SIZE = 42
 
-    TEXT_SPECIES = 70
-    TEXT_MOVES = 359
-    TEXT_ITEMS = 54
-    TEXT_ABILITIES = 339
-    TEXT_NATURES = 341
-    TEXT_TRAINER_NAMES = 336
-    TEXT_TRAINER_CLASSES = 337
-    TEXT_TYPE_NAMES = 356
-    TEXT_LOCATIONS = 89
+
 
 
     AI_FLAGS = {
@@ -74,20 +92,14 @@ class Unova_prequel(Johto_remake):
     }
 
     # # decode_encounters
-    @staticmethod
 
 
     def bootstrap_text(self, narc_files):
-        """Gen V: derive MULT from species file, then decrypt all."""
-        from xoleon import decode_gen5_text, derive_gen5_mult
-        # MULT derives itself: species file (TEXT_SPECIES), encrypted[0] ^ 0x0042 = 4*MULT
-        mult = derive_gen5_mult(narc_files[self.TEXT_SPECIES])
-        if mult == 0:
-            raise ValueError("Could not derive text MULT from species file")
-        self.text_mult = mult
+        """Gen V: decrypt all text files, fingerprint to identify tables."""
+        from xoleon import decode_gen5_text
         for i, f in enumerate(narc_files):
-            self.text_tables[i] = decode_gen5_text(f, mult)
-        self._map_text_tables()
+            self.text_tables[i] = decode_gen5_text(f)
+        self._auto_detect_tables()
 
     def decode_personal(self, data, file_idx, text_tables, tm_table=None):
         """Decode Gen V personal data (76 bytes). BW/B2W2."""
@@ -173,106 +185,73 @@ class Unova_prequel(Johto_remake):
 
         return "\n".join(out)
 
-    def decode_encounters(self, data: bytes, text_tables: dict = None) -> dict:
-        """Decode Gen V encounter data (BW/B2W2).
-        232 bytes per season. Species u16 encodes form in upper bits (& 0x7FF)."""
-        if len(data) < 232:
+    def learnset_moves(self, data):
+        """Raw learnset for reverse lookup: [(level, move_id)]. u16 move + u16 level, ends FFFFFFFF."""
+        out = []
+        for i in range(0, len(data) - 3, 4):
+            m, lv = struct.unpack_from('<HH', data, i)
+            if m == 0xFFFF and lv == 0xFFFF: break
+            out.append((lv, m))
+        return out
+
+    def decode_learnset(self, data, file_idx, text_tables, **kwargs):
+        """Decode Gen V+ learnset: (move_id u16, level u16) pairs, terminated by FFFFFFFF."""
+        if len(data) < 4:
             return None
+        species_list = text_tables.get('species', [])
+        moves_list = text_tables.get('moves', [])
+        species_name = species_list[file_idx] if file_idx < len(species_list) else f"#{file_idx}"
 
-        species_list = (text_tables or {}).get('species', [])
-        seasons = []
-        season_names = ['Spring', 'Summer', 'Fall', 'Winter']
-        num_seasons = len(data) // 232
+        moves = []
+        for i in range(0, len(data) - 3, 4):
+            move_id = struct.unpack_from('<H', data, i)[0]
+            level = struct.unpack_from('<H', data, i + 2)[0]
+            if move_id == 0xFFFF and level == 0xFFFF:
+                break
+            move_name = moves_list[move_id] if move_id < len(moves_list) else f"move#{move_id}"
+            moves.append((level, move_name))
 
-        for season_idx in range(num_seasons):
-            season_data = data[season_idx * 232:(season_idx + 1) * 232]
+        lines = [f"{species_name} (#{file_idx}) — Learnset"]
+        for level, move_name in moves:
+            lines.append(f"  Lv{level:<4}{move_name}")
+        if not moves:
+            lines.append("  (none)")
+        return "\n".join(lines)
 
-            rates = {
-                "grass": season_data[0], "double_grass": season_data[1], "special_grass": season_data[2],
-                "surf": season_data[3], "special_surf": season_data[4],
-                "fishing": season_data[5], "special_fishing": season_data[6]
-            }
+    ZONE_HEADER_PATH = 'a/0/1/2'
 
-            def read_entries(offset, count):
-                entries = []
-                for j in range(count):
-                    pos = offset + j * 4
-                    if pos + 4 > len(season_data):
-                        break
-                    raw = struct.unpack_from("<H", season_data, pos)[0]
-                    species_id = raw & 0x7FF
-                    form = raw >> 11
-                    min_lv = season_data[pos + 2]
-                    max_lv = season_data[pos + 3]
-                    if species_id == 0:
-                        continue
-                    name = species_list[species_id] if species_id < len(species_list) else f"#{species_id}"
-                    form_label = Unova_prequel.FORM_NAMES.get((species_id, form))
-                    if form_label is None and form > 0:
-                        form_label = f"Form {form}"
-                    if form_label:
-                        name += f" ({form_label})"
-                    entries.append({"species": name, "level": f"{min_lv}-{max_lv}" if min_lv != max_lv else str(min_lv)})
-                return entries
+    def _enc_locations(self):
+        m = getattr(self, '_enc_loc_map', None)
+        if m is not None: return m
+        z = self.get_narc(self.ZONE_HEADER_PATH).files[0]
+        m = {}
+        for i in range(len(z) // 48):
+            if z[i * 48 + 0x14] != 0xFF: m.setdefault(z[i * 48 + 0x14], struct.unpack_from('<H', z, i * 48 + 0x1A)[0] & 0x3FF)
+        self._enc_loc_map = m
+        return m
 
-            result = {"rates": {k: v for k, v in rates.items() if v > 0}}
-
-            groups = [
-                ("grass", 8, 12), ("double_grass", 56, 12), ("special_grass", 104, 12),
-                ("surf", 152, 5), ("special_surf", 172, 5),
-                ("fishing", 192, 5), ("special_fishing", 212, 5)
-            ]
-            for name, offset, count in groups:
-                if rates.get(name, 0) > 0:
-                    entries = read_entries(offset, count)
-                    if entries:
-                        result[name] = entries
-
-            if num_seasons > 1:
-                result["season"] = season_names[season_idx] if season_idx < len(season_names) else f"Season {season_idx + 1}"
-                seasons.append(result)
-            else:
-                return result
-
-        return {"seasons": seasons} if seasons else None
+    def decode_encounters(self, data, file_idx=0, text_tables=None, **kwargs):
+        if len(data) < 232 or len(data) % 232: return []
+        locs = (text_tables or self.text_tables).get('location_names', [])
+        li = self._enc_locations().get(file_idx)
+        loc = locs[li] if li is not None and li < len(locs) else f'Zone {file_idx}'
+        seasons = len(data) // 232
+        if all(data[s * 232:(s + 1) * 232] == data[:232] for s in range(seasons)): seasons = 1
+        out = []
+        for s in range(seasons):
+            b = s * 232
+            tag = f" ({('Spring', 'Summer', 'Autumn', 'Winter')[s]})" if seasons > 1 else ''
+            for area, off, n, ri in (('Grass', 8, 12, 0), ('Dark Grass', 56, 12, 1), ('Shaking Grass', 104, 12, 2), ('Surf', 152, 5, 3),
+                                     ('Rippling Surf', 172, 5, 4), ('Fishing', 192, 5, 5), ('Rippling Fishing', 212, 5, 6)):
+                if data[b + ri]:
+                    for i in range(n):
+                        raw, mn, mx = struct.unpack_from('<HBB', data, b + off + i * 4)
+                        if raw & 0x7FF: out.append((f'{loc} {area}{tag}', raw & 0x7FF, raw >> 11, mn, mx, {'location': loc, 'method': area, 'period': ('Spring', 'Summer', 'Autumn', 'Winter')[s] if seasons > 1 else ''}))
+        return out
     FLIPNOTE_PAIRS = {
         # Gen V
         'Pokémon Black & White': ['IRB', 'IRA'],
         'Pokémon Black & White 2': ['IRE', 'IRD'],
-    }
-
-
-    TRAINER_LOCATIONS = {
-        # Gen V - Black/White
-        "IRB": {
-            ("Leader", "Cilan"): "Striaton Gym",
-            ("Leader", "Chili"): "Striaton Gym",
-            ("Leader", "Cress"): "Striaton Gym",
-            ("Leader", "Lenora"): "Nacrene Gym",
-            ("Leader", "Burgh"): "Castelia Gym",
-            ("Leader", "Elesa"): "Nimbasa Gym",
-            ("Leader", "Clay"): "Driftveil Gym",
-            ("Leader", "Skyla"): "Mistralton Gym",
-            ("Leader", "Brycen"): "Icirrus Gym",
-            ("Leader", "Drayden"): "Opelucid Gym",
-            ("Leader", "Iris"): "Opelucid Gym",
-            ("Elite Four", "Shauntal"): "Pokémon League",
-            ("Elite Four", "Grimsley"): "Pokémon League",
-            ("Elite Four", "Caitlin"): "Pokémon League",
-            ("Elite Four", "Marshal"): "Pokémon League",
-            ("Champion", "Alder"): "Pokémon League",
-            ("PKMN Trainer", "N"): "N's Castle",
-            ("Subway Boss", "Ingo"): "Battle Subway",
-            ("Subway Boss", "Emmet"): "Battle Subway",
-        },
-        "IRA": "IRB",  # White alias
-
-    }
-
-
-    CLASS_LOCATIONS = {
-        "IRB": {"Elite Four": "Pokémon League", "Champion": "Pokémon League", "Subway Boss": "Battle Subway"},
-        "IRA": "IRB",
     }
 
 
@@ -302,11 +281,202 @@ class Unova_prequel(Johto_remake):
         (648, 1): "Pirouette",
     }
 
+    def get_ability_from_personal(self, species_id, ability_slot, text_tables):
+        """Resolve ability slot to ability name via personal data."""
+        ability_list = text_tables.get('abilities', [])
+        try:
+            personal_path = getattr(self, 'PERSONAL_PATH', '')
+            if not personal_path:
+                return f"ability_slot_{ability_slot}"
+            personal_narc = self.get_narc(personal_path)
+            if species_id >= len(personal_narc.files):
+                return f"ability_slot_{ability_slot}"
+            pd = personal_narc.files[species_id]
+            # Gen V: abilities at 0x18, 0x19, 0x1A (3 slots)
+            if len(pd) < 0x1B:
+                return f"ability_slot_{ability_slot}"
+            aid = pd[0x18 + min(ability_slot, 2)]
+            return ability_list[aid] if aid < len(ability_list) else f"ability#{aid}"
+        except Exception:
+            return f"ability_slot_{ability_slot}"
+
+    def decode_trpoke(self, data, file_idx=0, text_tables=None, trainer_data=None, **kwargs) -> dict:
+        """Decode Gen V TRPoke. 8B base: iv(u8) ability_gender(u8) level(u8) pad(u8) species(u16) form(u16)."""
+        if len(data) == 0:
+            return {"pokemon": []}
+
+        species_list = text_tables.get('species', [])
+        moves_list = text_tables.get('moves', [])
+        items_list = text_tables.get('items', [])
+
+        formats = getattr(self, 'TRPOKE_FORMATS', {})
+        template = 0
+        if trainer_data and len(trainer_data) >= 1:
+            template = trainer_data[0] & 0x03
+
+        pokemon_size = formats.get(template, formats[0])
+        num_pokemon = len(data) // pokemon_size
+        GENDER_SYM = {1: '\u2642', 2: '\u2640'}
+
+        pokemon = []
+        for i in range(num_pokemon):
+            off = i * pokemon_size
+            if off + pokemon_size > len(data):
+                break
+
+            difficulty = data[off]
+            ability_gender = data[off + 1]
+            level = data[off + 2]
+            species_id = struct.unpack_from('<H', data, off + 4)[0]
+            form = struct.unpack_from('<H', data, off + 6)[0]
+
+            ability_slot = (ability_gender >> 4) & 0xF
+            gender_val = ability_gender & 0xF
+            species_name = species_list[species_id] if species_id < len(species_list) else f"#{species_id}"
+            if form: species_name += f" (Form {form})"
+            ability_name = self.get_ability_from_personal(species_id, ability_slot, text_tables)
+            gender = GENDER_SYM.get(gender_val, '')
+            ivs = difficulty * 31 // 255 if difficulty <= 255 else 31
+            base_size = 8
+
+            entry = {
+                "species": species_name,
+                "species_id": species_id,
+                "level": level,
+                "ability": ability_name,
+                "gender": gender,
+                "ivs": ivs,
+                "form": form,
+            }
+
+            if template & 2:
+                item_id = struct.unpack_from('<H', data, off + base_size)[0]
+                item_name = items_list[item_id] if item_id < len(items_list) else f"item#{item_id}"
+                entry["held_item"] = item_name if item_id > 0 else "None"
+
+            if template & 1:
+                move_off = off + base_size + (2 if template & 2 else 0)
+                moves = []
+                for m in range(4):
+                    mid = struct.unpack_from('<H', data, move_off + m * 2)[0]
+                    if mid > 0:
+                        moves.append(moves_list[mid] if mid < len(moves_list) else f"move#{mid}")
+                entry["moves"] = moves
+
+            pokemon.append(entry)
+
+        return {"template": template, "count": num_pokemon, "pokemon": pokemon}
+
+    def decode_trainer(self, data, file_idx, text_tables):
+        """Decode Gen V trainer. trdata=20B, trpoke=8B base per pokemon."""
+        if len(data) < 16:
+            return None
+
+        trainer_names = text_tables.get('trainer_names', [])
+        trainer_classes = text_tables.get('trainer_classes', [])
+        items_list = text_tables.get('items', [])
+
+        flags = data[0]
+        trainer_class = data[1]
+        battle_type = data[2]
+        num_pokemon = data[3]
+
+        battle_items = []
+        for i in range(4):
+            item_id = struct.unpack_from('<H', data, 4 + i * 2)[0]
+            if item_id > 0:
+                name = items_list[item_id] if item_id < len(items_list) else f"item#{item_id}"
+                battle_items.append(name)
+
+        ai_flags_raw = struct.unpack_from('<I', data, 12)[0]
+        ai_flags = self.decode_ai_flags(ai_flags_raw)
+        class_name = trainer_classes[trainer_class] if trainer_class < len(trainer_classes) else f"class#{trainer_class}"
+        prize_money_base = data[17] if len(data) > 17 else 0
+
+        # Resolve trainer name (with rival injection)
+        _RIVAL_NAMES = {145: "Hugh"}
+        if trainer_class in _RIVAL_NAMES:
+            name = _RIVAL_NAMES[trainer_class]
+        elif file_idx is not None and file_idx < len(trainer_names):
+            name = trainer_names[file_idx].strip() or f"Trainer #{file_idx}"
+        else:
+            name = f"Trainer #{file_idx}"
+
+        # Location from bootstrap (gym leaders, league)
+        location = None
+        for indices, loc in getattr(self, '_gym_locations', ()):
+            if file_idx in indices:
+                location = loc
+                break
+        if location is None and file_idx in getattr(self, '_league_indices', set()):
+            location = "Pokémon League"
+
+        # Mode + battle type from bootstrap (B2W2 challenge mode, first/rematch)
+        paren_parts = []
+        challenge_start = getattr(self, '_challenge_start', None)
+        if challenge_start is not None:
+            paren_parts.append('Challenge Mode' if file_idx >= challenge_start else 'Normal Mode')
+        if file_idx in getattr(self, '_rematch_indices', set()):
+            paren_parts.append('Rematch')
+        elif file_idx in getattr(self, '_initial_indices', set()):
+            paren_parts.append('First Battle')
+        paren = f" ({', '.join(paren_parts)})" if paren_parts else ""
+
+        if location:
+            lines = [f"{class_name} {name}{paren} | {location}"]
+        else:
+            lines = [f"{class_name} {name}{paren}"]
+        lines.append('')
+
+        # Fetch trpoke — team block
+        highest_level = 0
+        try:
+            trpoke_path = getattr(self, 'TRPOKE_PATH', '')
+            if trpoke_path:
+                trpoke_data = self.read_file(f"{trpoke_path}:{file_idx}")
+                team = self.decode_trpoke(trpoke_data, text_tables, data)
+                if team and team.get('pokemon'):
+                    lines.append('Team:')
+                    for pk in team['pokemon']:
+                        lv = pk['level']
+                        if lv > highest_level:
+                            highest_level = lv
+                        gender = f" {pk['gender']}" if pk.get('gender') else ''
+                        held = pk.get('held_item', 'None')
+                        held_str = f"  [{held}]" if held and held != 'None' else ''
+                        lines.append(f"{pk['species']}{gender} (Lv. {lv}){held_str}")
+
+                        if pk.get('ability'):
+                            lines.append(f"Ability: {pk['ability']}")
+
+                        iv = pk.get('ivs', '?')
+                        lines.append(f"IVs: {iv} HP / {iv} Atk / {iv} Def / {iv} SpA / {iv} SpD / {iv} Spe")
+
+                        if pk.get('moves'):
+                            lines.append(' / '.join(pk['moves']))
+
+                        lines.append('')
+        except Exception:
+            pass
+
+        # Footer
+        footer = []
+        if prize_money_base and highest_level:
+            prize = prize_money_base * 4 * highest_level
+            footer.append(f"Prize: \u00a5{prize:,}")
+        if battle_items:
+            footer.append(f"Items Used in Battle: {', '.join(battle_items)}")
+        if footer:
+            lines.append(' | '.join(footer))
+        lines.append(f"AI: {ai_flags}")
+
+        return '\n'.join(lines)
+
     def _format_encounter_gen5(self, decoded, file_idx):
         """Format Gen V encounter data as template text."""
         seasons_data = decoded.get('seasons', None)
         if seasons_data:
-            return _format_encounter_gen5_seasonal(seasons_data, file_idx)
+            return self._format_encounter_gen5_seasonal(seasons_data, file_idx)
 
         lines = []
         location = decoded.get('location', '')
@@ -325,7 +495,7 @@ class Unova_prequel(Johto_remake):
         for key, header, rates in sections:
             entries = decoded.get(key, [])
             if entries:
-                section = _format_section(entries, rates, header)
+                section = self._format_section(entries, rates, header)
                 if section:
                     lines.append(section)
 
@@ -550,6 +720,7 @@ class Unova_prequel(Johto_remake):
             out.append(f'PP restore: {pp_gain}')
 
         active_friend = [f for f in friendship if f]
+
         if active_friend:
             out.append(f'Friendship: {"/".join(str(f) for f in friendship)}')
 
@@ -559,3 +730,7 @@ class Unova_prequel(Johto_remake):
 
         return "\n".join(out)
 
+    POKEATHLON_PATH = None
+    BABY_SPECIES_PATH = None
+
+ 

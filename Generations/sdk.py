@@ -21,30 +21,26 @@ class SDK:
     EVO_LEVEL_UP = 4
     EVO_TRADE = 5
     EVO_TRADE_WITH_ITEM = 6
-    EVO_TRADE_FOR_SPECIES = 7
-    EVO_STONE = 8
-    EVO_ATK_GT_DEF = 9
-    EVO_ATK_EQ_DEF = 10
-    EVO_ATK_LT_DEF = 11
-    EVO_PERSONALITY_LO = 12
-    EVO_PERSONALITY_HI = 13
-    EVO_NINJASK = 14
-    EVO_SHEDINJA = 15
-    EVO_BEAUTY = 16
-    EVO_ITEM_DAY = 17
-    EVO_ITEM_NIGHT = 18
-    EVO_MOVE = 19
-    EVO_PARTY_SPECIES = 20
-    EVO_LEVEL_MALE = 21
-    EVO_LEVEL_FEMALE = 22
-    EVO_LEVEL_ELECTRIC = 23
-    EVO_LEVEL_MOSSY = 24
-    EVO_LEVEL_ICY = 25
-    EVO_LEVEL_MOSSY_2 = 26
-    EVO_LEVEL_ICY_2 = 27
-    EVO_LEVEL_DARK = 28
-    EVO_SPIN = 29
-    EVO_LEVEL_RAIN = 30
+    EVO_STONE = 7
+    EVO_ATK_GT_DEF = 8
+    EVO_ATK_EQ_DEF = 9
+    EVO_ATK_LT_DEF = 10
+    EVO_PERSONALITY_LO = 11
+    EVO_PERSONALITY_HI = 12
+    EVO_NINJASK = 13
+    EVO_SHEDINJA = 14
+    EVO_BEAUTY = 15
+    EVO_STONE_MALE = 16
+    EVO_STONE_FEMALE = 17
+    EVO_HOLD_ITEM_DAY = 18
+    EVO_HOLD_ITEM_NIGHT = 19
+    EVO_MOVE = 20
+    EVO_PARTY_SPECIES = 21
+    EVO_LEVEL_MALE = 22
+    EVO_LEVEL_FEMALE = 23
+    EVO_LEVEL_ELECTRIC = 24
+    EVO_LEVEL_MOSSY = 25
+    EVO_LEVEL_ICY = 26
 
     # ── Gender byte values ──
     GENDER_ALL_MALE = 0
@@ -55,6 +51,16 @@ class SDK:
     GENDER_1M_7F = 223
     GENDER_ALL_FEMALE = 254
     GENDER_GENDERLESS = 255
+
+    learnset_moves = None  # reverse lookup off until a class defines its learnset format
+
+    def _iter_narc_learnsets(self):
+        """(species_idx, [(level, move_id)]) per learnset file. None if format unknown."""
+        if not self.learnset_moves or not getattr(self, 'LEARNSET_PATH', None): return None
+        return ((i, self.learnset_moves(d)) for i, d in enumerate(self.get_narc(self.LEARNSET_PATH).files))
+
+    def iter_learnsets(self):
+        return self._iter_narc_learnsets()
 
     # ── Growth curves ──
     GROWTH_MEDIUM_FAST = 0
@@ -94,19 +100,42 @@ class SDK:
                        'Dragon', 'Undiscovered')
     CATEGORY_NAMES = ('Status', 'Physical', 'Special')
     SEX_SYMBOLS = ('', ' M', ' F')
-    BATTLE_TYPES = ('Single', 'Double', 'Triple', 'Rotation', '', 'Multi')
+    BATTLE_TYPES = ('Single',)
 
     # ── EV yield stat order (bitfield) ──
     EV_STAT_ORDER = ('HP', 'Atk', 'Def', 'Spe', 'SpA', 'SpD')
+
+    # ── Language system ──
+    # Game Freak's filesystem order — each language is a consecutive GARC.
+    # The GARC number IS the language. No dict needed.
+    LANGUAGES_8 = ('ja', 'ja-kanji', 'en', 'fr', 'it', 'de', 'es', 'ko')
+    LANGUAGES_10 = ('ja', 'ja-kanji', 'en', 'fr', 'it', 'de', 'es', 'ko', 'zh-Hans', 'zh-Hant')
+
+    # Specs override these to enable multilingual text
+    TEXT_LANG_BASE = None    # GARC path prefix, e.g. 'a/0/7/'
+    TEXT_LANG_FIRST = 0      # GARC index where JPN starts
+    LANGUAGES = ()           # which tuple — LANGUAGES_8 or LANGUAGES_10
 
     # ── Game identity defaults ──
     JP = False
     YEAR = None
     TITLES = ()
+    GAME_CODES = ()
 
-    # ── Encounter slot rates ──
-    GRASS_SLOT_RATES = (20, 20, 10, 10, 10, 10, 5, 5, 4, 4, 1, 1)
-    WATER_SLOT_RATES = (60, 30, 5, 4, 1)
+    # ── Region codes (Nintendo's single-char region in ROM headers) ──
+    REGION_MAP = {
+        'J': 'JP', 'E': 'US', 'P': 'EU', 'D': 'DE', 'F': 'FR',
+        'S': 'ES', 'I': 'IT', 'K': 'KR', 'C': 'CN', 'W': 'World',
+    }
+
+    # ── GB game code lookup (GB ROMs have titles, not 4-char codes) ──
+    _GB_GAME_CODES = {
+        'POKEMON RED': 'PMR', 'POKEMON BLUE': 'PMB', 'POKEMON BLU': 'PMB',
+        'POKEMON YELLOW': 'PMY', 'POKEMON GREEN': 'PMG', 'POKEMON YEL': 'PMY', 'POKEMON GRE': 'PMG',
+        'POKEMON_GLDAAUE': 'PMG2', 'POKEMON_GLD': 'PMG2', 'POKEMON GOLD': 'PMG2',
+        'PM_CRYSTAL': 'PMC', 'POKEMON CRYSTAL': 'PMC',
+        'POKEMON SILVER': 'PMS',
+    }
 
     # ── Instance state (populated by spotlight) ──
 
@@ -122,11 +151,12 @@ class SDK:
     )
 
     HEURISTIC_MARKERS = (
-        ('trainer_classes', ("Youngster", "Lass", "Ace Trainer")),
+        ('trainer_classes', ("Youngster", "Hiker", "Ace Trainer")),
         ('location_names',  ("Mystery Zone",)),
         ('trainer_names',   ("Palmer", "Cynthia")),
         ('trainer_names_gen5', ("Bianca", "Shauntal", "Grimsley")),
         ('trainer_names_gen7', ("Lana", "Acerola", "Gladion")),
+        ('trainer_names_gen9a', ("Taunie", "Urbain", "Jacinthe")),
     )
 
     HEURISTIC_SUBSTR = (
@@ -138,6 +168,8 @@ class SDK:
     )
 
     def __init__(self):
+        self._lang = 'en'
+        self._text_indices = {}  # {name: file_idx} — survives language switches
         self.text_tables = {}
         self.tm_table = []
         self.enc_loc = {}
@@ -146,6 +178,8 @@ class SDK:
         self.text_mult = None
         self.text_narc_path = None
         self._text_modified = set()
+        self.pwt_name_to_entries = {}
+        self.pwt_entry_tournaments = {}
         self.rom = None           # ndspy ROM object (NDS) or raw bytes (GBA/GB)
         self.rom_type = None      # 'nds', '3ds', 'gba', 'gbc', 'gb'
         self.rom_path = None
@@ -158,6 +192,7 @@ class SDK:
         self.code_data = None     # 3DS ExeFS .code
         self.compression_state = {}
         self._narc_cache = {}
+        self._ahtb_cache = {}   # {narc_path: [ahtb_bytes, ...]} — parallel with _narc_cache .files
         self.switch_rom = None
         self.flipnote = None      # {path, data}
         self.eonet_labels = {}
@@ -172,12 +207,14 @@ class SDK:
         raise ValueError(f"read_file not implemented for {self.__class__.__name__}")
 
     @classmethod
-    def get_spec(cls, game_code):
-        """Walk subclass tree to find the spec for a game code."""
-        if game_code in cls.__dict__.get('GAME_CODES', ()):
+    def get_spec(cls, code):
+        """Walk subclass tree to find the spec for a game code or title ID."""
+        if code in cls.__dict__.get('GAME_CODES', ()):
+            return cls
+        if code in cls.__dict__.get('TITLE_IDS', ()):
             return cls
         for sub in cls.__subclasses__():
-            result = sub.get_spec(game_code)
+            result = sub.get_spec(code)
             if result:
                 return result
 
@@ -191,6 +228,85 @@ class SDK:
                 narcs[role] = getattr(spec, attr)
         return narcs
 
+    # ── Header readers (ROM identification) ──
+
+    @staticmethod
+    def _read_nds_banner_title(path, banner_offset):
+        """Read English title from NDS banner (UTF-16LE at banner+0x340)."""
+        try:
+            with open(path, 'rb') as f:
+                f.seek(banner_offset + 0x340)
+                raw = f.read(256).decode('utf-16-le', errors='ignore').split('\x00')[0]
+                lines = raw.split('\n')
+                return f"{lines[0]} {lines[1]}".strip() if len(lines) >= 2 else lines[0].strip()
+        except:
+            return ""
+
+    @classmethod
+    def read_header(cls, path, update_path=None):
+        """Read ROM header. Returns dict with game_code, region, etc."""
+        import struct as _st
+        ext = path.rsplit('.', 1)[-1].lower()
+
+        if ext == 'nds':
+            with open(path, 'rb') as f:
+                short_title = f.read(12).decode('ascii', errors='ignore').strip('\x00')
+                full_code = f.read(4).decode('ascii', errors='ignore')
+                f.seek(0x68)
+                banner_offset = _st.unpack('<I', f.read(4))[0]
+            game_code = full_code[:3] if len(full_code) >= 3 else full_code
+            region_char = full_code[3] if len(full_code) >= 4 else 'E'
+            english_title = cls._read_nds_banner_title(path, banner_offset) if banner_offset else ""
+            is_english = bool(english_title and any(c.isalpha() for c in english_title))
+            return {'game_code': game_code, 'full_code': full_code,
+                    'region_char': region_char, 'short_title': short_title,
+                    'game_title': english_title if is_english else short_title,
+                    'is_english': is_english,
+                    'region': cls.REGION_MAP.get(region_char, 'INT')}
+
+        if ext == 'gba':
+            with open(path, 'rb') as f:
+                f.seek(0xA0)
+                title = f.read(12).decode('ascii', errors='ignore').strip('\x00')
+                full_code = f.read(4).decode('ascii', errors='ignore')
+            game_code = full_code.strip() if full_code.strip() else full_code[:3]
+            region_char = full_code[3] if len(full_code) >= 4 else 'E'
+            return {'game_code': game_code, 'full_code': full_code,
+                    'region_char': region_char, 'game_title': title,
+                    'region': cls.REGION_MAP.get(region_char, 'US'),
+                    'is_english': region_char in ('E', 'P', 'D', 'F', 'S', 'I')}
+
+        if ext in ('gb', 'gbc'):
+            with open(path, 'rb') as f:
+                data = f.read(0x150)
+            title = data[0x134:0x13F].decode('ascii', errors='ignore').strip('\x00').strip()
+            region_byte = data[0x14A] if len(data) > 0x14A else 0x01
+            region = 'JP' if region_byte == 0x00 else 'US'
+            region_char = 'J' if region == 'JP' else 'E'
+            game_code = cls._GB_GAME_CODES.get(title.upper(), title[:3].upper())
+            return {'game_code': game_code, 'full_code': title[:4],
+                    'region_char': region_char, 'game_title': title,
+                    'region': region, 'is_english': region != 'JP'}
+
+        if ext in ('xci', 'nsp'):
+            return cls._read_switch_header(path, update_path)
+
+        raise ValueError(f"Unknown ROM extension: .{ext}")
+
+    @classmethod
+    def _read_switch_header(cls, path, update_path=None):
+        """Read Switch ROM header. Extracts title ID, finds spec via get_spec."""
+        from leswitch import open_rom
+        sw = open_rom(path, update_path=update_path)
+        title_id = sw.title_id
+        spec = cls.get_spec(title_id)
+        if not spec:
+            raise ValueError(f'Unknown Switch title ID: 0x{title_id:016X}')
+        idx = spec.TITLE_IDS.index(title_id) if title_id in spec.TITLE_IDS else 0
+        return {'game_code': spec.GAME_CODES[idx], 'game_title': spec.TITLES[idx],
+                'region': 'World', 'region_char': 'W', 'is_english': True,
+                'title_id': title_id, '_switch_rom': sw}
+
     # ── Role dispatch ──
 
     def decode(self, role, data, file_idx=0, path='', **kwargs):
@@ -203,24 +319,25 @@ class SDK:
         if not method:
             return None
         try:
-            return method(data, file_idx, self.text_tables, path=path, **kwargs)
-        except TypeError:
             try:
-                return method(data, file_idx, self.text_tables)
-            except Exception:
-                return None
+                r = method(data, file_idx, self.text_tables, path=path, **kwargs)
+            except TypeError:
+                r = method(data, file_idx, self.text_tables)
         except Exception:
             return None
+        if isinstance(r, list) and r and isinstance(r[0], tuple) and len(r[0]) == 5:
+            sp = self.text_tables.get('species', [])
+            return '\n'.join(f"{lb}: {sp[s] if s < len(sp) else s}" + (f" form{fm}" if fm else '') + f" Lv{lo}" + (f"-{hi}" if hi != lo else '') for lb, s, fm, lo, hi in r)
+        return r
 
     def _map_text_tables(self):
-        """Map TEXT_* class constants to named keys. TEXT_SPECIES=362 → self.text_tables['species']=self.text_tables[362]."""
-        for attr in dir(self):
-            if attr.startswith('TEXT_') and attr not in ('TEXT_PATH', 'TEXT_SCRIPT_PATH', 'TEXT_TABLE_MAP'):
-                name = attr[5:].lower()  # TEXT_SPECIES → species
-                idx = getattr(self, attr)
-                if isinstance(idx, int) and idx in self.text_tables:
+        """Map indices to named keys. Saved indices (from fingerprinting) take priority."""
+        # Saved indices from a previous fingerprint pass — same file positions, any language
+        if self._text_indices:
+            for name, idx in self._text_indices.items():
+                if idx in self.text_tables:
                     self.text_tables[name] = self.text_tables[idx]
-        # Also handle TEXT_TABLE_MAP dicts (Gen VII style: {'species': 0, 'moves': 1, ...})
+            return
         tmap = getattr(self, 'TEXT_TABLE_MAP', None)
         if tmap:
             for name, idx in tmap.items():
@@ -230,6 +347,47 @@ class SDK:
     def bootstrap_text(self, narc_files):
         """Decrypt text files and map named tables. Override per gen for decrypt method."""
         pass
+
+    def text_path_for(self, lang='en'):
+        """Compute text path for any language. Switch: folder-name swap. 3DS: index math."""
+        folders = getattr(self, 'LANG_FOLDERS', None)
+        if folders:
+            cur = folders.get(self._lang or 'en', 'English')
+            tgt = folders.get(lang)
+            if not tgt:
+                raise ValueError(f"Unknown language '{lang}'. Options: {', '.join(self.LANGUAGES)}")
+            return self.TEXT_PATH.replace(cur, tgt)
+        if not self.TEXT_LANG_BASE or not self.LANGUAGES:
+            return getattr(self, 'TEXT_PATH', None)
+        return f'{self.TEXT_LANG_BASE}{self.TEXT_LANG_FIRST + self.LANGUAGES.index(lang)}'
+
+    def set_language(self, lang):
+        """Switch language and clear text tables for re-bootstrap."""
+        if not self.LANGUAGES:
+            raise ValueError(f"{self.__class__.__name__} has no language support")
+        if lang not in self.LANGUAGES:
+            raise ValueError(f"'{lang}' not available. Options: {', '.join(self.LANGUAGES)}")
+        self._lang = lang
+        self.TEXT_PATH = self.text_path_for(lang)
+        self.text_tables.clear()
+
+
+    @staticmethod
+    def parse_ahtb(data):
+        """Parse AHTB sidecar: returns list of (hash_u64, name_str) parallel with .tbl entries."""
+        if not data or data[:4] != b'AHTB':
+            return []
+        import struct
+        count = struct.unpack_from('<I', data, 4)[0]
+        entries = []
+        off = 8
+        for _ in range(count):
+            h = struct.unpack_from('<Q', data, off)[0]; off += 8
+            slen = struct.unpack_from('<H', data, off)[0]; off += 2
+            name = data[off:off+slen].decode('utf-8', errors='replace').rstrip('\x00')
+            off += slen  # slen includes null terminator
+            entries.append((h, name))
+        return entries
 
     # ── Shared decoders ──
 
@@ -253,18 +411,22 @@ class SDK:
         else:
             return "Random"
 
+    def get_challenge_delta(self, file_idx):
+        """Challenge mode level delta. Only BW2 overrides this."""
+        return 0
+
     def decode_ai_flags(self, flags):
-        """Decode AI flags into human-readable list."""
+        """Decode AI flags into comma-separated string."""
         flag_map = getattr(self, 'AI_FLAGS', {})
         active_flags = []
         for bit, name in sorted(flag_map.items()):
             if flags & bit:
                 active_flags.append(name)
-        return active_flags if active_flags else ["None"]
+        return ', '.join(active_flags) if active_flags else 'None'
 
     def _format_section(self, entries, rates, header):
         """Format a consolidated encounter section."""
-        consolidated = _consolidate_slots(entries, rates)
+        consolidated = self._consolidate_slots(entries, rates)
         if not consolidated:
             return ""
         lines = [f"\n{header}:"]
@@ -284,9 +446,14 @@ class SDK:
         trainer_name = trdata.get('name', f'Trainer #{file_idx}')
         battle_type = trdata.get('battle_type', 'Single')
 
-        # Look up location for special trainers (Gym Leaders, E4, Champions, etc.)
-        game_code = current_rom['header']['game_code'] if current_rom else None
-        location = get_trainer_location(game_code, class_name, trainer_name) if game_code else None
+        # Location from bootstrap (gym leaders, league, etc.)
+        location = None
+        for indices, loc in getattr(self, '_gym_locations', ()):
+            if file_idx in indices:
+                location = loc
+                break
+        if location is None and file_idx in getattr(self, '_league_indices', set()):
+            location = "Pokémon League"
 
         if location:
             lines = [f"{class_name} {trainer_name} - {location}"]
@@ -296,7 +463,7 @@ class SDK:
         if battle_type != 'Single':
             lines[0] += f"  [{battle_type} Battle]"
 
-        _chal_delta = Unova_sequel.GET_CHALLENGE_DELTA(file_idx, game_code)
+        _chal_delta = self.get_challenge_delta(file_idx)
 
         if pokemon:
             lines.append("")
@@ -440,6 +607,8 @@ class SDK:
         # Try English first, then Japanese — same indices, different strings.
         # Gather fingerprint sets: main + any from spec chain (Gen 3, JP, etc.)
         _fp_sets = [self.TABLE_FINGERPRINTS]
+        if self.TABLE_FINGERPRINTS is not SDK.TABLE_FINGERPRINTS:
+            _fp_sets.append(SDK.TABLE_FINGERPRINTS)
         fp_jp = getattr(self, 'TABLE_FINGERPRINTS_JP', None)
         if fp_jp:
             _fp_sets.append(fp_jp)
@@ -488,14 +657,14 @@ class SDK:
 
         # Promote gen-specific trainer_names variants -> trainer_names
         # Use gen moniker to pick the right variant — no blind priority
-        _gen_variant = {7: 'trainer_names_gen7', 6: 'trainer_names_gen7',
+        _gen_variant = {9: 'trainer_names_gen9a', 7: 'trainer_names_gen7', 6: 'trainer_names_gen7',
                         5: 'trainer_names_gen5'}
         preferred = _gen_variant.get(self.GEN)
         if preferred and preferred in found and 'trainer_names' not in found:
             found['trainer_names'] = found.pop(preferred)
             self.text_tables['trainer_names'] = self.text_tables.pop(preferred)
         # Clean up any unmatched variants
-        for variant in ('trainer_names_gen7', 'trainer_names_gen5'):
+        for variant in ('trainer_names_gen9a', 'trainer_names_gen7', 'trainer_names_gen5'):
             if variant in found:
                 found.pop(variant)
                 self.text_tables.pop(variant, None)
@@ -507,10 +676,10 @@ class SDK:
             'CPU': 618,                # Platinum
             'IPK': 729, 'IPG': 729,   # HeartGold / SoulSilver
         }
-        gc = current_rom['header']['game_code'] if current_rom else None
+        gc = self.header.get('game_code') if self.header else None
         if gc in VERIFIED_TRAINER_NAMES:
             correct_idx = VERIFIED_TRAINER_NAMES[gc]
-            if correct_idx in text_tables and isinstance(self.text_tables[correct_idx], list):
+            if correct_idx in self.text_tables and isinstance(self.text_tables[correct_idx], list):
                 old_idx = found.get('trainer_names')
                 if old_idx is not None and old_idx != correct_idx:
                     self.text_tables['npc_names'] = self.text_tables[old_idx]
@@ -522,12 +691,12 @@ class SDK:
         # Gen V: typically ±1. Gen IV: can be ±1 to ±3.
         # Descriptions have similar entry count but longer average string length.
         for name_tbl, desc_tbl in [('items', 'item_descriptions'), ('moves', 'move_descriptions'), ('abilities', 'ability_descriptions')]:
-            if name_tbl in found and desc_tbl not in found:
+            if found.get(name_tbl, -1) >= 0 and desc_tbl not in found:
                 name_idx = found[name_tbl]
                 name_count = len(self.text_tables[name_tbl])
                 for offset in [-1, 1, -2, 2, -3, 3]:
                     candidate = name_idx + offset
-                    if candidate in text_tables and isinstance(self.text_tables[candidate], list) and candidate not in found.values():
+                    if candidate in self.text_tables and isinstance(self.text_tables[candidate], list) and candidate not in found.values():
                         entries = self.text_tables[candidate]
                         if abs(len(entries) - name_count) < 10:
                             avg_len = sum(len(s) for s in entries[:20]) / max(1, min(20, len(entries)))
@@ -543,7 +712,7 @@ class SDK:
         }
         if gc in VERIFIED_DESCS:
             for desc_tbl, idx in VERIFIED_DESCS[gc].items():
-                if desc_tbl not in found and idx in text_tables and isinstance(self.text_tables[idx], list):
+                if desc_tbl not in found and idx in self.text_tables and isinstance(self.text_tables[idx], list):
                     self.text_tables[desc_tbl] = self.text_tables[idx]
                     found[desc_tbl] = idx
 
@@ -555,7 +724,7 @@ class SDK:
                 if offset == 0:
                     continue
                 candidate = sp_idx + offset
-                if candidate in text_tables and isinstance(self.text_tables[candidate], list) and candidate not in found.values():
+                if candidate in self.text_tables and isinstance(self.text_tables[candidate], list) and candidate not in found.values():
                     entries = self.text_tables[candidate]
                     if abs(len(entries) - sp_count) < 10:
                         avg_len = sum(len(s) for s in entries[:20]) / max(1, min(20, len(entries)))
@@ -564,6 +733,10 @@ class SDK:
                             found['pokedex_flavor'] = candidate
                             break
 
+        # Save indices so language switches skip fingerprinting
+        for name, idx in found.items():
+            if idx >= 0:
+                self._text_indices[name] = idx
         return found
 
     def discover_tm_table(self, binary_data):

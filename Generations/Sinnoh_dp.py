@@ -4,19 +4,16 @@ Inherits Hoenn_rse. Gen IV jump: NDS platform, NARC filesystem,
 text encryption (XOR cipher + 9-bit packing), 493 species,
 physical/special split per move, online play.
 """
-from Generations.Hoenn_rse import Hoenn_rse
+from Hoenn_rse import Hoenn_rse
 import struct
-from xoleon import (
-    _GEN4_HIRAGANA, _GEN4_KATAKANA, _GEN4_FULLWIDTH_SYMBOLS, _GEN4_SPECIAL,
-    _get_gen4_char, decode_gen4_text,
-)
+from xoleon import decode_gen4_text
 
 
 class Sinnoh_dp(Hoenn_rse):
     """Diamond/Pearl. Gen IV baseline."""
 
     GAME_CODES = ('ADA', 'APA')
-    TITLES = ('POKÉMON DIAMOND', 'POKÉMON PEARL')
+    TITLES = ('Pokémon Diamond', 'Pokémon Pearl')
     YEAR = 2007
 
     PLATFORM = 'Nintendo DS'
@@ -31,7 +28,7 @@ class Sinnoh_dp(Hoenn_rse):
     EVOLUTION_PATH = 'poketool/personal/evo.narc'
     BABY_SPECIES_PATH = 'poketool/personal/pms.narc'
     MOVE_DATA_PATH = 'poketool/waza/waza_tbl.narc'
-    TRDATA_PATH = 'poketool/trainer/trdata.narc'
+    TRAINER_PATH = 'poketool/trainer/trdata.narc'
     TRPOKE_PATH = 'poketool/trainer/trpoke.narc'
     ITEM_PATH = 'itemtool/itemdata/item_data.narc'
     CONTEST_PATH = 'contest/data/contest_data.narc'
@@ -44,15 +41,21 @@ class Sinnoh_dp(Hoenn_rse):
     MOVE_DATA_SIZE = 16
     EVOLUTION_SIZE = 44
 
-    TEXT_SPECIES = 362
-    TEXT_MOVES = 588
-    TEXT_ITEMS = 344
-    TEXT_ABILITIES = 552
-    TEXT_TYPE_NAMES = 565
-    TEXT_NATURES = 190
-    TEXT_TRAINER_CLASSES = 560
-    TEXT_TRAINER_NAMES = 559
-    TEXT_LOCATIONS = 382
+    def iter_encounters(self):
+        enc = getattr(self, 'ENCOUNTER_PATH', None)
+        if not enc:
+            gc = self.header.get('game_code', '')
+            enc = self.ENCOUNTER_PATH_D if gc.startswith('AD') else getattr(self, 'ENCOUNTER_PATH_P', self.ENCOUNTER_PATH_D)
+        if not enc: return []
+        out = []
+        for fi, f in enumerate(self.get_narc(enc).files):
+            r = self.decode_encounters(f, fi, self.text_tables)
+            if isinstance(r, list): out.extend(t[:5] + ({**t[5], 'path': f'{enc}:{fi}'},) for t in r)
+        return out
+    GRASS_SLOT_RATES = (20, 20, 10, 10, 10, 10, 5, 5, 4, 4, 1, 1)
+    WATER_SLOT_RATES = (60, 30, 5, 4, 1)
+
+
 
     AI_FLAGS = {
         0x001: "Basic AI",
@@ -79,9 +82,6 @@ class Sinnoh_dp(Hoenn_rse):
         2: 8,   # + item(2)
         3: 18,  # + item(2) + moves(8) + pad(2)
     }
-    @staticmethod
-
-
     def get_narc(self, narc_path):
         import ndspy.narc
         key = narc_path
@@ -119,7 +119,7 @@ class Sinnoh_dp(Hoenn_rse):
         from xoleon import decode_gen4_text
         for i, f in enumerate(narc_files):
             self.text_tables[i] = decode_gen4_text(f)
-        self._map_text_tables()
+        self._auto_detect_tables()
 
     def decode_personal(self, data, file_idx, text_tables, tm_table=None):
         """Decode Gen IV personal data (44 bytes). DP/Pt/HGSS."""
@@ -192,77 +192,51 @@ class Sinnoh_dp(Hoenn_rse):
 
         return "\n".join(out)
 
-    def decode_encounters(self, data: bytes, text_tables: dict = None) -> dict:
-        """Decode Gen IV DP/Pt encounter data (424 bytes).
-        Land: rate(u32) + 12 grass slots(u32 level + u32 species) + replacements.
-        Water: 5 sections × (rate u32 + 5 × {max_lv u8, min_lv u8, pad u16, species u16, pad u16})."""
-        if len(data) != 424:
-            return None
+    MAP_HEADER_WILD = (0x0E, '<H', 0xFFFF)
+    MAP_HEADER_MUSIC = 10
 
-        species_list = (text_tables or {}).get('species', [])
-        result = {}
+    def _enc_locations(self):
+        m = getattr(self, '_enc_loc_map', None)
+        if m is not None: return m
+        import struct as st
+        a, (wo, wf, none), mo = self.arm9_data, self.MAP_HEADER_WILD, self.MAP_HEADER_MUSIC
+        mus = lambda p: 1000 <= st.unpack_from('<H', a, p)[0] <= 1300 and 1000 <= st.unpack_from('<H', a, p + 2)[0] <= 1300
+        s = next((s for s in range(0, len(a) - 24 * 30, 4) if all(mus(s + i * 24 + mo) for i in range(30))), None)
+        m = {}
+        while s is not None and s + 24 <= len(a) and mus(s + mo):
+            w = st.unpack_from(wf, a, s + wo)[0]
+            if w != none: m.setdefault(w, a[s + 0x12])
+            s += 24
+        self._enc_loc_map = m
+        return m
 
-        # Grass rate at offset 0, slots at offset 4
-        grass_rate = struct.unpack_from("<I", data, 0)[0]
-        if grass_rate > 0:
-            grass = []
+    def decode_encounters(self, data, file_idx=0, text_tables=None, **kwargs):
+        import struct as st
+        if len(data) != 424: return []
+        locs = (text_tables or self.text_tables).get('location_names', [])
+        li = self._enc_locations().get(file_idx)
+        loc = locs[li] if li is not None and li < len(locs) else f'Zone {file_idx}'
+        out = []
+        if st.unpack_from('<I', data, 0)[0]:
+            lv = [st.unpack_from('<I', data, 4 + i * 8)[0] for i in range(12)]
             for i in range(12):
-                pos = 4 + i * 8
-                level = struct.unpack_from("<I", data, pos)[0]
-                species_id = struct.unpack_from("<I", data, pos + 4)[0]
-                if species_id == 0:
-                    continue
-                grass.append({"species": species_list[species_id] if species_id < len(species_list) else f"#{species_id}", "level": level})
-            if grass:
-                result["grass"] = grass
-                result["grass_rate"] = grass_rate
-
-        # Replacement species (offset 100): swarm(2), day(2), night(2), radar(4)
-        def read_replacements(offset, count):
-            species = []
-            for i in range(count):
-                sid = struct.unpack_from("<I", data, offset + i * 4)[0]
-                if sid > 0:
-                    species.append(species_list[sid] if sid < len(species_list) else f"#{sid}")
-            return species
-
-        swarm = read_replacements(100, 2)
-        if swarm:
-            result["swarm"] = swarm
-        day = read_replacements(108, 2)
-        if day:
-            result["day_replacements"] = day
-        night = read_replacements(116, 2)
-        if night:
-            result["night_replacements"] = night
-        radar = read_replacements(124, 4)
-        if radar:
-            result["radar"] = radar
-
-        # Water sections start at offset 204 (0xCC)
-        # 5 sections: surf, surf_special(?), old_rod, good_rod, super_rod
-        water_names = ["surf", "surf_special", "old_rod", "good_rod", "super_rod"]
-        water_offset = 204
-        for section_name in water_names:
-            rate = struct.unpack_from("<I", data, water_offset)[0]
-            water_offset += 4
-            if rate > 0:
-                entries = []
+                sp = st.unpack_from('<I', data, 8 + i * 8)[0]
+                if sp: out.append((f'{loc} Grass', sp, 0, lv[i], lv[i], {'location': loc, 'method': 'Grass'}))
+            for area, off, slots in (('Swarm', 100, (0, 1)), ('Day', 108, (2, 3)), ('Night', 116, (2, 3)), ('Radar', 124, (4, 5, 10, 11)),
+                                     ('Ruby', 164, (8, 9)), ('Sapphire', 172, (8, 9)), ('Emerald', 180, (8, 9)), ('FireRed', 188, (8, 9)), ('LeafGreen', 196, (8, 9))):
+                for k, s in enumerate(slots):
+                    sp = st.unpack_from('<I', data, off + k * 4)[0]
+                    if sp: out.append((f'{loc} Grass ({area})', sp, 0, lv[s], lv[s], {'location': loc, 'method': 'Grass', ('period' if area in ('Day', 'Night') else 'variant'): area}))
+        wo = 204
+        for area in ('Surf', 'Surf Special', 'Old Rod', 'Good Rod', 'Super Rod'):
+            rate = st.unpack_from('<I', data, wo)[0]; wo += 4
+            if rate:
                 for i in range(5):
-                    pos = water_offset + i * 8
-                    max_lv = data[pos]
-                    min_lv = data[pos + 1]
-                    species_id = struct.unpack_from("<H", data, pos + 4)[0]
-                    if species_id == 0:
-                        continue
-                    name = species_list[species_id] if species_id < len(species_list) else f"#{species_id}"
-                    lvl = f"{min_lv}-{max_lv}" if min_lv != max_lv else str(min_lv)
-                    entries.append({"species": name, "level": lvl})
-                if entries:
-                    result[section_name] = entries
-            water_offset += 40  # 5 slots × 8 bytes
-
-        return result if result else None
+                    mx, mn = data[wo + i*8], data[wo + i*8 + 1]
+                    sp = st.unpack_from('<H', data, wo + i*8 + 4)[0]
+                    if sp: out.append((f'{loc} {area}', sp, 0, mn, mx, {'location': loc, 'method': area}))
+            wo += 40
+        return out
     FLIPNOTE_PAIRS = {
         # Gen IV
         'Pokémon Diamond & Pearl': ['ADA', 'APA'],
@@ -359,7 +333,7 @@ class Sinnoh_dp(Hoenn_rse):
         4: (bytes([0x08, 0x01, 0x51, 0x01, 0x60, 0x01, 0x5B, 0x01]), 100),  # 92 TMs + 8 HMs
     }
 
-    def decode_trpoke(self, data, text_tables, trainer_data=None) -> dict:
+    def decode_trpoke(self, data, file_idx=0, text_tables=None, trainer_data=None, **kwargs) -> dict:
         """Decode a TRPoke file into human-readable format using text_tables.
         Gen IV: iv(u16) level(u16) species(u16) = 6B base."""
         if len(data) == 0:
@@ -427,8 +401,8 @@ class Sinnoh_dp(Hoenn_rse):
 
 
 
-    def decode_trdata(self, data, file_idx, text_tables) -> dict:
-        """Decode a TRData entry. Format detected by size — no gen check needed.
+    def decode_trainer(self, data, file_idx, text_tables):
+        """Decode trainer: reads trdata, fetches matching trpoke, returns formatted string.
         16B = Gen IV (flags, class, battle_type, npoke, items×4, ai_flags)
         20B = Gen V  (+ pad, prize_base, area_id, pad)"""
         if len(data) < 16:
@@ -440,7 +414,6 @@ class Sinnoh_dp(Hoenn_rse):
 
         BATTLE_TYPES = {0: "Single", 1: "Double", 2: "Triple", 3: "Rotation"}
 
-        # Gen IV/V: flags at 0, class at 1
         flags = data[0]
         trainer_class = data[1]
         battle_type = data[2]
@@ -456,52 +429,74 @@ class Sinnoh_dp(Hoenn_rse):
                 battle_items.append(item_name)
 
         ai_flags_raw = struct.unpack_from('<I', data, 12)[0]
-        # 20B = Gen V AI flag meanings, 16B = Gen IV AI flag meanings
         ai_flags = self.decode_ai_flags(ai_flags_raw)
         class_name = trainer_classes[trainer_class] if trainer_class < len(trainer_classes) else f"class#{trainer_class}"
 
-        # 20B entries have extra fields at 16-19; 16B entries don't
         prize_money_base = data[17] if len(data) > 17 else 0
-        area_id = data[18] if len(data) > 18 else 0
 
-        result = {
-            "class": class_name,
-            "battle_type": BATTLE_TYPES.get(battle_type, f"Unknown ({battle_type})"),
-            "num_pokemon": num_pokemon,
-            "has_custom_moves": has_moves,
-            "has_held_items": has_items,
-            "ai_flags": ai_flags,
-            "battle_items": battle_items if battle_items else "None",
-            "reward_multiplier": prize_money_base,
-            "area_id": area_id,
-            "raw": data.hex(),
-        }
-
-        # Player-named rivals: no real entry in trainer_names — the game replaces
-        # their name at runtime. We inject canonical names by trainer class ID.
-        # 16B = Gen IV games (HGSS, DPPt), 20B = Gen V games (BW, BW2)
+        # Resolve trainer name
         _RIVAL_NAMES_16B = {
-            23:  "Silver",  # HGSS rival
-            95:  "Barry",   # DP/Pt vs male player
-            96:  "Barry",   # DP/Pt vs female player
+            23: "Silver", 95: "Barry", 96: "Barry",
         }
         if len(data) < 20 and trainer_class in _RIVAL_NAMES_16B:
-            result["name"] = _RIVAL_NAMES_16B[trainer_class]
+            name = _RIVAL_NAMES_16B[trainer_class]
         elif file_idx is not None and file_idx < len(trainer_names):
-            name = trainer_names[file_idx].strip()
-            if name:
-                result["name"] = name
+            name = trainer_names[file_idx].strip() or f"Trainer #{file_idx}"
+        else:
+            name = f"Trainer #{file_idx}"
+
+        lines = [f"{class_name} {name} (#{file_idx})"]
+        lines.append('')
+
+        # Fetch trpoke — team block
+        highest_level = 0
+        try:
+            trpoke_path = getattr(self, 'TRPOKE_PATH', '')
+            if trpoke_path:
+                trpoke_data = self.read_file(f"{trpoke_path}:{file_idx}")
+                team = self.decode_trpoke(trpoke_data, text_tables, data)
+                if team and team.get('pokemon'):
+                    lines.append('Team:')
+                    for pk in team['pokemon']:
+                        lv = pk['level']
+                        if lv > highest_level:
+                            highest_level = lv
+                        held = pk.get('held_item', 'None')
+                        held_str = f"  [{held}]" if held and held != 'None' else ''
+                        lines.append(f"{pk['species']} (Lv. {lv}){held_str}")
+                        iv = pk.get('ivs', '?')
+                        lines.append(f"IVs: {iv} HP / {iv} Atk / {iv} Def / {iv} SpA / {iv} SpD / {iv} Spe")
+                        if pk.get('moves'):
+                            real_moves = [m for m in pk['moves'] if m != '---']
+                            if real_moves:
+                                lines.append(' / '.join(real_moves))
+                        lines.append('')
+        except Exception:
+            pass
+
+        # Footer — prize + items + AI
+        footer = []
+        if prize_money_base and highest_level:
+            prize = prize_money_base * 4 * highest_level
+            footer.append(f"Prize: \u00a5{prize:,}")
+        if battle_items:
+            footer.append(f"Items Used in Battle: {', '.join(battle_items)}")
+        if footer:
+            lines.append(' | '.join(footer))
+        lines.append(f"AI: {ai_flags}")
+
+        return '\n'.join(lines)
 
 
 
-        return result
 
 
 
 
 
-
-
+    def iter_learnsets(self):
+        """Back to one NARC file per species (Gen III's pointer table ends here)."""
+        return self._iter_narc_learnsets()
 
     def decode_learnset(self, data, file_idx, text_tables):
         """Decode learnset. All gens: u8 pairs (Gen 1/2), packed u16 (Gen 3/4), paired u16×2 (Gen 5)."""
@@ -532,54 +527,186 @@ class Sinnoh_dp(Hoenn_rse):
 
 
     def decode_evolution(self, data, file_idx, text_tables):
-        """Decode evolution table. Returns positional text."""
-        if len(data) < 6 or data[:min(42,len(data))] == b'\x00' * min(42,len(data)):
+        """Decode evolution data. Uses self.EVO_* constants for gen-correct method IDs."""
+        slot_size = getattr(self, 'EVO_SLOT_SIZE', 6)
+        slots = 8 if self.GEN >= 6 else 7
+        min_size = slot_size * slots
+        if len(data) < min_size or data[:min_size] == b'\x00' * min_size:
             return None
-        species_list = text_tables.get('species', [])
-        item_list = text_tables.get('items', [])
-        moves_list = text_tables.get('moves', [])
-        species_name = species_list[file_idx] if file_idx < len(species_list) else f"#{file_idx}"
+        species = text_tables.get('species', [])
+        items = text_tables.get('items', [])
+        moves = text_tables.get('moves', [])
+        types = text_tables.get('type_names', [])
+        name = species[file_idx] if file_idx < len(species) else f"#{file_idx}"
+
+        def _lk(table, idx, fb):
+            return table[idx] if idx < len(table) else f"{fb}#{idx}"
+
+        def _a(word):
+            return f"an {word}" if word[:1].lower() in 'aeiou' else f"a {word}"
+
+        def _evo_name(mid):
+            for k in dir(self):
+                if k.startswith('EVO_') and getattr(self, k) == mid:
+                    return k
+            return None
+
         evo_lines = []
-        slot_count, slot_size = 7, 6  # Gen IV: 7 slots x 6 bytes
-        for i in range(slot_count):
+        for i in range(slots):
             off = i * slot_size
-            if off + slot_size > len(data): break
             method = struct.unpack_from('<H', data, off)[0]
             param = struct.unpack_from('<H', data, off + 2)[0]
             target = struct.unpack_from('<H', data, off + 4)[0]
             if method == 0 and target == 0:
                 continue
-            method_name = next((n[4:].lower().replace('_',' ') for n in dir(self) if n.startswith('EVO_') and getattr(self,n)==method), f"method#{method}")
-            target_name = species_list[target] if target < len(species_list) else f"#{target}"
-            # Build condition string
-            if method in (4, 9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28):
-                cond = f"Lv{param}" if method == 4 else f"Lv{param}, {method_name}"
-            elif method in (6, 8, 17, 18):
-                item_name = item_list[param] if param < len(item_list) else f"item#{param}"
-                cond = item_name
-            elif method == 19:
-                move_name = moves_list[param] if param < len(moves_list) else f"move#{param}"
-                cond = f"knows {move_name}"
-            elif method in (7, 20):
-                sp = species_list[param] if param < len(species_list) else f"#{param}"
-                cond = f"trade for {sp}" if method == 7 else f"with {sp} in party"
-            elif method in (1, 2, 3):
-                cond = method_name
-            elif method == 5:
-                cond = "trade"
-            elif method == 16:
-                cond = f"beauty {param}"
-            elif method == 29:
-                cond = "spin"
+            lvl = data[off + 7] if slot_size == 8 else param
+            tgt = _lk(species, target, 'species')
+            ename = _evo_name(method)
+            S = self
+
+            if method == S.EVO_LEVEL_UP:
+                line = f"{tgt} at level {lvl}"
+            elif method == S.EVO_HAPPINESS:
+                line = f"{tgt} when leveled up with high friendship"
+            elif method == S.EVO_HAPPINESS_DAY:
+                line = f"{tgt} during the day if leveled up with high friendship"
+            elif method == S.EVO_HAPPINESS_NIGHT:
+                line = f"{tgt} during the night if leveled up with high friendship"
+            elif method == S.EVO_TRADE:
+                line = f"{tgt} when traded"
+            elif method == S.EVO_TRADE_WITH_ITEM:
+                line = f"{tgt} when traded while holding {_a(_lk(items, param, 'item'))}"
+            elif method == S.EVO_STONE:
+                line = f"{tgt} when exposed to {_a(_lk(items, param, 'item'))}"
+            elif method == getattr(S, 'EVO_TRADE_FOR_SPECIES', -1):
+                line = f"{tgt} when traded for {_lk(species, param, 'species')}"
+            elif method == getattr(S, 'EVO_STONE_MALE', -1):
+                line = f"{tgt} when exposed to {_a(_lk(items, param, 'item'))} if male"
+            elif method == getattr(S, 'EVO_STONE_FEMALE', -1):
+                line = f"{tgt} when exposed to {_a(_lk(items, param, 'item'))} if female"
+            elif method == getattr(S, 'EVO_HOLD_ITEM_DAY', -1):
+                line = f"{tgt} when leveled up while holding {_a(_lk(items, param, 'item'))} during the day"
+            elif method == getattr(S, 'EVO_HOLD_ITEM_NIGHT', -1):
+                line = f"{tgt} when leveled up while holding {_a(_lk(items, param, 'item'))} during the night"
+            elif method == S.EVO_ATK_GT_DEF:
+                line = f"{tgt} at level {lvl} if its Attack is higher than its Defense" if lvl else f"{tgt} when its Attack is higher than its Defense"
+            elif method == S.EVO_ATK_EQ_DEF:
+                line = f"{tgt} at level {lvl} if its Attack and Defense are equal" if lvl else f"{tgt} when its Attack and Defense are equal"
+            elif method == S.EVO_ATK_LT_DEF:
+                line = f"{tgt} at level {lvl} if its Attack is lower than its Defense" if lvl else f"{tgt} when its Attack is lower than its Defense"
+            elif method == S.EVO_PERSONALITY_LO:
+                line = f"{tgt} at level {lvl}, at random" if lvl else f"{tgt}, at random"
+            elif method == S.EVO_PERSONALITY_HI:
+                line = f"{tgt} at level {lvl}, at random" if lvl else f"{tgt}, at random"
+            elif method == S.EVO_NINJASK:
+                line = f"{tgt} at level {lvl}" if lvl else f"{tgt}"
+            elif method == S.EVO_SHEDINJA:
+                line = f"{tgt} when Nincada evolves, if there's an empty party slot and a spare Poké Ball"
+            elif method == S.EVO_BEAUTY:
+                line = f"{tgt} when leveled up with high Beauty"
+            elif method == S.EVO_MOVE:
+                line = f"{tgt} when leveled up while knowing {_lk(moves, param, 'move')}"
+            elif method == S.EVO_PARTY_SPECIES:
+                line = f"{tgt} when leveled up with {_lk(species, param, 'species')} in the party"
+            elif method == S.EVO_LEVEL_MALE:
+                line = f"{tgt} at level {lvl} if male" if lvl else f"{tgt} if male"
+            elif method == S.EVO_LEVEL_FEMALE:
+                line = f"{tgt} at level {lvl} if female" if lvl else f"{tgt} if female"
+            elif method == S.EVO_LEVEL_ELECTRIC:
+                line = f"{tgt} when leveled up in a special magnetic field"
+            elif method == S.EVO_LEVEL_MOSSY:
+                line = f"{tgt} when leveled up near a Moss Rock"
+            elif method == S.EVO_LEVEL_ICY:
+                line = f"{tgt} when leveled up near an Ice Rock"
+            elif method == getattr(S, 'EVO_LEVEL_UPSIDE_DOWN', -1):
+                line = f"{tgt} at level {lvl} while holding the console upside-down" if lvl else f"{tgt} while holding the console upside-down"
+            elif method == getattr(S, 'EVO_AFFECTION_TYPE', -1):
+                tn = _lk(types, param, 'type')
+                line = f"{tgt} with high Affection and also knowing {_a(tn)} type move"
+            elif method == getattr(S, 'EVO_LEVEL_DARK_PARTY', -1):
+                line = f"{tgt} at level {lvl} with a Dark type in the party" if lvl else f"{tgt} when leveled up with a Dark type in the party"
+            elif method == getattr(S, 'EVO_LEVEL_RAIN', -1):
+                line = f"{tgt} at level {lvl} during rain" if lvl else f"{tgt} during rain"
+            elif method == getattr(S, 'EVO_LEVEL_DAY', -1):
+                line = f"{tgt} at level {lvl} during the day" if lvl else f"{tgt} during the day"
+            elif method == getattr(S, 'EVO_LEVEL_NIGHT', -1):
+                line = f"{tgt} at level {lvl} during the night" if lvl else f"{tgt} during the night"
+            elif method == getattr(S, 'EVO_LEVEL_FEMALE_SPECIAL', -1):
+                line = f"{tgt} at level {lvl} if female" if lvl else f"{tgt} if female"
+            elif method == getattr(S, 'EVO_LEVEL_VERSION', -1):
+                vp = getattr(S, 'VERSION_PARAMS', ())
+                vname = S.TITLES[vp.index(param)] if param in vp else f'version {param}'
+                line = f"{tgt} at level {lvl} in {vname}"
+            elif method == getattr(S, 'EVO_LEVEL_DAY_VERSION', -1):
+                vp = getattr(S, 'VERSION_PARAMS', ())
+                vname = S.TITLES[vp.index(param)] if param in vp else f'version {param}'
+                line = f"{tgt} at level {lvl} during the day in {vname}"
+            elif method == getattr(S, 'EVO_LEVEL_NIGHT_VERSION', -1):
+                vp = getattr(S, 'VERSION_PARAMS', ())
+                vname = S.TITLES[vp.index(param)] if param in vp else f'version {param}'
+                line = f"{tgt} at level {lvl} during the night in {vname}"
+            elif method == getattr(S, 'EVO_LEVEL_SUMMIT', -1):
+                line = f"{tgt} at the Altar of the Sunne/Moone"
+            elif method == getattr(S, 'EVO_LEVEL_DUSK', -1):
+                line = f"{tgt} at dusk (Own Tempo)"
+            elif method == getattr(S, 'EVO_LEVEL_WORMHOLE', -1):
+                line = f"{tgt} in the Ultra Wormhole"
+            elif method == getattr(S, 'EVO_USE_ITEM_WORMHOLE', -1):
+                line = f"{tgt} using {_lk(items, param, 'item')} in the Ultra Wormhole"
+            elif method == getattr(S, 'EVO_CRITICAL_HITS', -1):
+                line = f"{tgt} after landing 3 critical hits in one battle"
+            elif method == getattr(S, 'EVO_HP_LOST', -1):
+                line = f"{tgt} after taking {param}+ damage without fainting"
+            elif method == getattr(S, 'EVO_SPIN', -1):
+                line = f"{tgt} when spinning while holding a sweet"
+            elif method == getattr(S, 'EVO_NATURE_AMPED', -1):
+                line = f"{tgt}'s either Amped Forme, or its Low-Key Forme, at level {lvl}, based on the Pokémon's Nature" if lvl else f"{tgt}'s either Amped Forme, or its Low-Key Forme, based on the Pokémon's Nature"
+            elif method == getattr(S, 'EVO_NATURE_LOW_KEY', -1):
+                continue  # merged into Amped line
+            elif method == getattr(S, 'EVO_TOWER_DARKNESS', -1):
+                line = f"{tgt} at the Tower of Darkness"
+            elif method == getattr(S, 'EVO_TOWER_WATERS', -1):
+                line = f"{tgt} at the Tower of Waters"
+            elif method == getattr(S, 'EVO_WALK_STEPS_WITH', -1):
+                line = f"{tgt} after walking 1000 steps using Let's Go"
+            elif method == getattr(S, 'EVO_UNION_CIRCLE', -1):
+                line = f"{tgt} while in a Union Circle"
+            elif method == getattr(S, 'EVO_BATTLE_EC25', -1):
+                line = f"Either into a family of three or four at level {lvl}, at random" if lvl else f"Either into a family of three or four, at random"
+            elif method == getattr(S, 'EVO_BATTLE_EC_ELSE', -1):
+                continue  # merged into EC25 line
+            elif method == getattr(S, 'EVO_COLLECT_999', -1):
+                line = f"{tgt} after collecting 999 Gimmighoul Coins"
+            elif method == getattr(S, 'EVO_DEFEAT_EQUALS', -1):
+                line = f"{tgt} after defeating 3 of the same species holding Leader's Crest"
+            elif method == getattr(S, 'EVO_USE_MOVE_SPECIAL', -1):
+                line = f"{tgt} after using a specific move 20 times"
+            elif method == getattr(S, 'EVO_KNOW_MOVE_EC_ELSE', -1):
+                line = f"Either into a two-segment or three-segment form when leveled up while knowing {_lk(moves, param, 'move')}, at random"
+            elif method == getattr(S, 'EVO_KNOW_MOVE_EC25', -1):
+                continue  # merged into EC_ELSE line
+            elif method == getattr(S, 'EVO_RECOIL_DAMAGE_MALE', -1):
+                line = f"{tgt} after taking recoil damage (male)"
+            elif method == getattr(S, 'EVO_RECOIL_DAMAGE_FEMALE', -1):
+                line = f"{tgt} after taking recoil damage if female"
+            elif method == getattr(S, 'EVO_HISUI', -1):
+                line = f"{tgt} in Pokémon Legends: Arceus"
+            elif method == getattr(S, 'EVO_USE_ITEM_FULL_MOON', -1):
+                line = f"{tgt} using {_lk(items, param, 'item')} during a full moon"
+            elif method == getattr(S, 'EVO_USE_MOVE_AGILE', -1):
+                line = f"{tgt} after using a move in Agile Style"
+            elif method == getattr(S, 'EVO_USE_MOVE_STRONG', -1):
+                line = f"{tgt} after using a move in Strong Style"
+            elif method == getattr(S, 'EVO_USE_MOVE_BARB_BARRAGE', -1):
+                line = f"{tgt} after using Barb Barrage"
             else:
-                cond = f"{method_name}" + (f" ({param})" if param else "")
-            evo_lines.append(f"  → {target_name} ({cond})")
+                label = ename[4:].replace('_', ' ').lower() if ename else f"method {method}"
+                line = f"{tgt} via {label}" + (f" (param {param})" if param else "")
+            evo_lines.append(f"  {line}")
+
         if not evo_lines:
             return None
-        lines = [f"{species_name} (#{file_idx}) — Evolutions"] + evo_lines
-        return "\n".join(lines)
-
-
+        return f"{name} Evolution Methods\nEvolves into:\n" + "\n".join(evo_lines)
 
     def decode_move(self, data, file_idx, text_tables):
         """Decode move data. Format detected by size — no gen check needed.

@@ -3,7 +3,7 @@
 Inherits Unova_sequel. Gen VI jump: 3DS platform, GARC containers,
 full 3D, Mega Evolution, Fairy type, 721 species.
 """
-from Generations.Unova_sequel import Unova_sequel
+from Unova_sequel import Unova_sequel
 
 import struct
 
@@ -12,7 +12,7 @@ class Kalos_prequel(Unova_sequel):
     """X/Y. Gen VI baseline."""
 
     GAME_CODES = ('EKJ', 'EK2')
-    TITLES = ('POKÉMON X', 'POKÉMON Y')
+    TITLES = ('Pokémon X', 'Pokémon Y')
     YEAR = 2013
 
     PLATFORM = 'Nintendo 3DS'
@@ -21,7 +21,11 @@ class Kalos_prequel(Unova_sequel):
 
     SPECIES_COUNT = 721
 
-    TEXT_PATH = 'a/0/7/2'
+    # Text: 8 languages at a/0/7/2 through a/0/7/9
+    TEXT_LANG_BASE = 'a/0/7/'
+    TEXT_LANG_FIRST = 2
+    LANGUAGES = ('ja', 'ja-kanji', 'en', 'fr', 'it', 'de', 'es', 'ko')
+    TEXT_PATH = 'a/0/7/4'
     PERSONAL_PATH = 'a/2/1/8'
     LEARNSET_PATH = 'a/2/1/4'
     EVOLUTION_PATH = 'a/2/1/5'
@@ -31,7 +35,7 @@ class Kalos_prequel(Unova_sequel):
     ITEM_PATH = 'a/2/2/0'
     MOVE_DATA_PATH = 'a/2/1/2'
     ENCOUNTER_PATH = 'a/0/1/2'
-    TRDATA_PATH = 'a/0/3/8'
+    TRAINER_PATH = 'a/0/3/8'
     TRPOKE_PATH = 'a/0/4/0'
     TRCLASS_PATH = 'a/0/3/9'
     MAISON_POKEMON_NORMAL_PATH = 'a/2/0/3'
@@ -42,14 +46,13 @@ class Kalos_prequel(Unova_sequel):
     PERSONAL_SIZE = 0x50
 
     # ── Evolution methods (Gen VI adds to Gen V set) ──
-    EVO_LEVEL_UPSIDE_DOWN = 31
-    EVO_LEVEL_DARK_TYPE_PARTY = 32
-    EVO_LEVEL_RAIN = 33
-    EVO_LEVEL_DAY = 34
-    EVO_LEVEL_NIGHT = 35
-    EVO_LEVEL_FEMALE = 36
-    EVO_LEVEL_GAME_A = 37
-    EVO_LEVEL_GAME_B = 38
+    EVO_LEVEL_UPSIDE_DOWN = 28
+    EVO_AFFECTION_TYPE = 29
+    EVO_LEVEL_DARK_PARTY = 30
+    EVO_LEVEL_RAIN = 31
+    EVO_LEVEL_DAY = 32
+    EVO_LEVEL_NIGHT = 33
+    EVO_LEVEL_FEMALE_SPECIAL = 34
 
     FLIPNOTE_PAIRS = {
         'Pokemon X & Y': ['EKJ', 'EK2'],
@@ -71,17 +74,18 @@ class Kalos_prequel(Unova_sequel):
         ('Horde B',        84,  5),
         ('Horde C',        89,  5),
     ]
+    ENC_SECTIONS = XY_SECTIONS
 
     # ── ORAS encounter sections: 61 slots x 4 bytes = 0xF4 ──
     ORAS_SECTIONS = [
         ('Grass',          0,  12),
         ('Tall Grass',     12, 12),
-        ('Rock Smash',     24,  3),
+        ('Swarm',          24,  3),
         ('Surf',           27,  5),
-        ('Old Rod',        32,  5),
-        ('Good Rod',       37,  3),
-        ('Super Rod',      40,  3),
-        ('Swarm',          43,  3),
+        ('Rock Smash',     32,  5),
+        ('Old Rod',        37,  3),
+        ('Good Rod',       40,  3),
+        ('Super Rod',      43,  3),
         ('Horde A',        46,  5),
         ('Horde B',        51,  5),
         ('Horde C',        56,  5),
@@ -116,7 +120,7 @@ class Kalos_prequel(Unova_sequel):
             # WD flat files: single GARC sub packing multiple entries
             wd = getattr(self, '_wd_cache', {}).get(gp)
             if wd is None:
-                data, total = read_garc_sub(self.romfs_fh, self.romfs_files[gp][0], 0)
+                data = read_garc_sub(self.romfs_fh, self.romfs_files[gp][0], 0)
                 if data and len(data) > 4 and data[0:2] == b'WD':
                     count = struct.unpack_from('<H', data, 2)[0]
                     offsets = [struct.unpack_from('<I', data, 4 + i*4)[0] for i in range(count + 1)]
@@ -128,8 +132,10 @@ class Kalos_prequel(Unova_sequel):
                 if fi >= len(wd):
                     raise ValueError(f"Index {fi} out of range (WD has {len(wd)} entries)")
                 return wd[fi]
-            data, total = read_garc_sub(self.romfs_fh, self.romfs_files[gp][0], fi)
+            data = read_garc_sub(self.romfs_fh, self.romfs_files[gp][0], fi)
             if data is None:
+                from xoleon import read_garc_count
+                total = read_garc_count(self.romfs_fh, self.romfs_files[gp][0])
                 raise ValueError(f"Index {fi} out of range (GARC has {total} files)")
             return data
         if p not in self.romfs_files:
@@ -144,7 +150,7 @@ class Kalos_prequel(Unova_sequel):
         self.text_mult = 0x2983
         for i, f in enumerate(narc_files):
             self.text_tables[i] = decode_gen5_text(f, 0x2983)
-        self._map_text_tables()
+        self._auto_detect_tables()
 
     @staticmethod
     def _get_rates(count):
@@ -153,7 +159,6 @@ class Kalos_prequel(Unova_sequel):
         if count == 3:  return Kalos_prequel.RATES_3
         return [100 // count] * count
 
-    @staticmethod
     def _parse_slots_gen6(self, data, num_slots):
         """Parse Gen VI encounter slots. Each slot = 4 bytes: u16(species|form<<11) + u8 min + u8 max."""
         slots = []
@@ -168,28 +173,31 @@ class Kalos_prequel(Unova_sequel):
             slots.append((species, form, min_lv, max_lv))
         return slots
 
-    @staticmethod
-    def decode_encounters(self, data, is_oras=False):
-        """Decode Gen VI encounter data from a GARC sub-file."""
-        if not data or len(data) < 0x14:
-            return None
-        ptr = struct.unpack_from('<I', data, 0x10)[0]
-        enc_offset = ptr + (0x0E if is_oras else 0x10)
-        enc_size = 0xF4 if is_oras else 0x178
-        sections = Kalos_prequel.ORAS_SECTIONS if is_oras else Kalos_prequel.XY_SECTIONS
-        if enc_offset + enc_size > len(data):
-            return None
-        enc_data = data[enc_offset:enc_offset + enc_size]
-        total_slots = enc_size // 4
-        all_slots = Kalos_prequel._parse_slots_gen6(enc_data, total_slots)
-        if not any(s[0] != 0 for s in all_slots):
-            return None
-        result = {'gen': 6, 'is_oras': is_oras, 'sections': {}}
-        for name, start, count in sections:
-            slots = all_slots[start:start + count]
-            if any(s[0] != 0 for s in slots):
-                result['sections'][name] = slots
-        return result
+    ENC_OFFSET, ENC_SIZE, ZONE_DATA_INDEX = 0x10, 0x178, -1
+
+    def _enc_locations(self):
+        m = getattr(self, '_enc_loc_map', None)
+        if m is not None: return m
+        z = self.get_narc(self.ENCOUNTER_PATH).files[self.ZONE_DATA_INDEX]
+        self._enc_loc_map = m = [struct.unpack_from('<H', z, i * 56 + 0x1C)[0] & 0x1FF for i in range(len(z) // 56)]
+        return m
+
+    def decode_encounters(self, data, file_idx=0, text_tables=None, **kwargs):
+        zones = self._enc_locations()
+        if file_idx >= len(zones) or not data or len(data) < 0x14: return []
+        if data[0] == 0x11:
+            from xoleon import decompress_lz11
+            data = decompress_lz11(data)
+        o = struct.unpack_from('<I', data, 0x10)[0] + self.ENC_OFFSET
+        if o + self.ENC_SIZE > len(data): return []
+        locs = (text_tables or self.text_tables).get('location_names', [])
+        loc = locs[zones[file_idx]] if zones[file_idx] < len(locs) else f'Zone {file_idx}'
+        out = []
+        for area, start, n in self.ENC_SECTIONS:
+            for i in range(start, start + n):
+                raw, mn, mx = struct.unpack_from('<HBB', data, o + i * 4)
+                if raw & 0x7FF: out.append((f'{loc} {area}', raw & 0x7FF, raw >> 11, mn, mx, {'location': loc, 'method': area}))
+        return out
 
     @staticmethod
     def format_encounter_gen6(decoded, file_idx, name_resolver=None):
@@ -247,7 +255,6 @@ class Kalos_prequel(Unova_sequel):
 
         return "\n".join(lines).strip() if lines else None
 
-    @staticmethod
     def decode_personal(self, data, file_idx, is_oras, text_tables, tm_table=None):
         """Decode Gen VI personal data. Returns formatted string."""
         expected = 0x50 if is_oras else 0x40
@@ -297,17 +304,17 @@ class Kalos_prequel(Unova_sequel):
         # Gender/growth/egg label helpers
         def _gender_label(g):
             for k in dir(self):
-                if k.startswith('GENDER_') and getattr(_SDK, k) == g:
+                if k.startswith('GENDER_') and getattr(self, k) == g:
                     return k[7:].replace('_', ' ').title()
             return f"ratio {g}"
         def _growth_label(g):
             for k in dir(self):
-                if k.startswith('GROWTH_') and getattr(_SDK, k) == g:
+                if k.startswith('GROWTH_') and getattr(self, k) == g:
                     return k[7:].replace('_', ' ').title()
             return f"#{g}"
         def _egg_label(g):
             for k in dir(self):
-                if k.startswith('EGG_') and getattr(_SDK, k) == g:
+                if k.startswith('EGG_') and getattr(self, k) == g:
                     return k[4:].replace('_', ' ').title()
             return f"#{g}"
 
@@ -344,56 +351,7 @@ class Kalos_prequel(Unova_sequel):
 
         return "\n".join(lines)
 
-    @staticmethod
-    def decode_evolution(self, data, file_idx, text_tables):
-        """Decode Gen VI evolution data. Returns formatted string."""
-        if len(data) < 48 or data[:48] == b'\x00' * 48:
-            return None
-        species_list = text_tables.get('species', [])
-        item_list = text_tables.get('items', [])
-        moves_list = text_tables.get('moves', [])
-        species_name = species_list[file_idx] if file_idx < len(species_list) else f"#{file_idx}"
 
-        def _evo_label(method_id):
-            for k in dir(self):
-                if k.startswith('EVO_') and getattr(_SDK, k) == method_id:
-                    return k[4:].replace('_', ' ').title()
-            # Check Kalos_xy's own additions
-            for k in dir(Kalos_prequel):
-                if k.startswith('EVO_') and getattr(Kalos_prequel, k) == method_id:
-                    return k[4:].replace('_', ' ').title()
-            return f"method#{method_id}"
-
-        evo_lines = []
-        for i in range(8):
-            off = i * 6
-            method = struct.unpack_from('<H', data, off)[0]
-            param = struct.unpack_from('<H', data, off + 2)[0]
-            target = struct.unpack_from('<H', data, off + 4)[0]
-            if method == 0 and target == 0: continue
-            method_name = _evo_label(method)
-            target_name = species_list[target] if target < len(species_list) else f"#{target}"
-            if method in (4, 9, 10, 11, 21, 22, 23, 24, 25, 26, 27, 28, 31, 34, 35, 36):
-                cond = f"Lv{param}" if method == 4 else f"Lv{param}, {method_name}"
-            elif method in (6, 8, 17, 18):
-                cond = item_list[param] if param < len(item_list) else f"item#{param}"
-            elif method == 19:
-                mn = moves_list[param] if param < len(moves_list) else f"move#{param}"
-                cond = f"knows {mn}"
-            elif method in (7, 20):
-                sp = species_list[param] if param < len(species_list) else f"#{param}"
-                cond = f"trade for {sp}" if method == 7 else f"with {sp} in party"
-            elif method in (1, 2, 3): cond = method_name
-            elif method == 5: cond = "trade"
-            elif method == 16: cond = f"beauty {param}"
-            elif method == 29: cond = "spin"
-            else: cond = f"{method_name}" + (f" ({param})" if param else "")
-            evo_lines.append(f"  -> {target_name} ({cond})")
-
-        if not evo_lines: return None
-        return f"{species_name} (#{file_idx}) \u2014 Evolutions\n" + "\n".join(evo_lines)
-
-    @staticmethod
     def decode_move_data(self, data, file_idx, text_tables):
         """Decode Gen VI move data. Returns formatted string."""
         if len(data) < 0x22 or data == b'\x00' * len(data):
@@ -429,7 +387,6 @@ class Kalos_prequel(Unova_sequel):
             line += f"\n{desc_list[file_idx]}"
         return line
 
-    @staticmethod
     def decode_trainer(self, trdata, trpoke, is_oras, text_tables):
         """Decode Gen VI trainer. Returns formatted string."""
         if not trdata or len(trdata) < 10:

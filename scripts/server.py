@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Silphéon
-A MCP Server that helps to facilitate the exploration of the entire Pokémon mainline series of games through Claude.
+A MCP Server that helps to facilitate the exploration of every mainline Pokémon game through Claude.
 """
 
 import json
@@ -29,7 +29,6 @@ from setup_tools import setup_tools, get_tool_path
 # Required: ndspy for DS ROM handling
 import ndspy.rom
 import ndspy.narc
-import ndspy.fnt
 import ndspy.lz10
 
 # ARM disassembler for probe reads="arm"/"thumb"
@@ -43,39 +42,24 @@ except ImportError:
     _cs_arm = _cs_thumb = None
 
 # ============ Generation-specific modules ============
-from leswitch import open_rom as open_switch_rom
+from leswitch import build_trinity_index
 from xoleon import (
     read_3ds_header, open_3ds_romfs, read_garc_sub, read_garc_all,
-    decompress_lz11, compress_lz11,
+    decompress_lz11,
     encode_gen4_text, encode_gen5_text,
     decode_gen4_text, decode_gen5_text,
-    derive_gen5_mult as derive_gen5_mult,
 )
 
 
 # ============ Game spec classes (SDK inheritance chain) ============
-from Generations.sdk import SDK
-from Generations.Kanto_rbg import Kanto_rbg
-from Generations.Kanto_yellow import Kanto_yellow
-from Generations.Johto_gs import Johto_gs
-from Generations.Johto_crystal import Johto_crystal
-from Generations.Hoenn_rse import Hoenn_rse
-from Generations.Sinnoh_dp import Sinnoh_dp
-from Generations.Sinnoh_pt import Sinnoh_pt
-from Generations.Johto_remake import Johto_remake
-from Generations.Unova_prequel import Unova_prequel
-from Generations.Unova_sequel import Unova_sequel
-from Generations.Kalos_prequel import Kalos_prequel
-from Generations.Hoenn_remake import Hoenn_remake
-from Generations.Alola_sm import Alola_sm
-from Generations.Alola_usum import Alola_usum
+import os as _os
+_here = _os.path.dirname(__file__)
+sys.path.insert(0, _os.path.join(_here, '..', 'Generations'))
+sys.path.insert(0, _here)  # for leswitch
+from Kalos_sequel import Kalos_sequel  # triggers entire inheritance chain → SDK
+from sdk import SDK
 
 # ── Gen-specific functions (from class modules, not old gen files) ──
-# Kanto_rbg functions accessed via spec/class
-# Johto_gs functions accessed via spec/class
-# Hoenn_rse functions accessed via spec/class
-# Johto_remake functions accessed via spec/class
-# Unova_sequel functions accessed via Unova_sequel.METHOD()
 
 
 
@@ -93,6 +77,12 @@ _rom_restore_in_progress = False  # Guards against concurrent restore runs
 _rom_restore_done = False         # Set True after first restore attempt completes
 _restore_task = None               # Background task handle for ROM restore
 _startup_log = []                  # Collects restore/BFS messages for the model to see
+
+# Eonet hooks. eonet_driver.py loads this module as its payload and overwrites these after load.
+# In the plain server.py config nothing overwrites them, so they stay neutral and the server runs on its own.
+eonet_labels = {}      # game_code -> {narc_path: {'role': str, 'labels': {idx: 'Name (Role)'}}}
+eonet_index = {}       # game_code -> [{name_lower, path, role, idx}, ...]
+_build_eonet = None    # BFS/ICR builder; None = Eonet not attached
 
 
 
@@ -151,6 +141,8 @@ async def _do_pending_restore():
             rom_type = getattr(loaded_roms.get(gc), 'rom', {}).get('type', 'nds') if gc in loaded_roms else 'nds'
             if rom_type != 'nds':
                 _startup_log.append(f"Skipped BFS for {gc} (non-NDS)")
+                continue
+            if _build_eonet is None:  # plain server.py config: no Eonet BFS
                 continue
             try:
                 if gc in loaded_roms:
@@ -268,7 +260,7 @@ def _note_belongs_to_game(path: str, game_codes: list) -> bool:
 def recover_notes_from_logs():
     """Mine Claude Code conversation logs for past note() calls. Replay them.
 
-    Scans every .jsonl in the project's .claude directory for mcp__silphéon__note (and legacy mcp__silphéon__note)
+    Scans every .jsonl in the project's .claude directory for mcp__silphéon__note (and legacy mcp__linkplay__note)
     and mcp__silphéon__batch_notes tool calls. Writes each note only to the
     flipnote(s) it actually belongs to, based on path heuristics and explicit
     game= fields. Never writes ICR-sourced notes into flipnotes.
@@ -290,7 +282,7 @@ def recover_notes_from_logs():
             try:
                 with open(jsonl_file, 'r', encoding='utf-8', errors='ignore') as fh:
                     for line in fh:
-                        if 'mcp__silphéon__note' not in line and 'mcp__silphéon__note' not in line:
+                        if 'mcp__silphéon__note' not in line and 'mcp__linkplay__note' not in line:
                             continue
                         try:
                             entry = json.loads(line)
@@ -302,11 +294,11 @@ def recover_notes_from_logs():
                                 continue
                             bname = block.get('name', '')
                             inp = block.get('input', {})
-                            if bname in ('mcp__silphéon__note', 'mcp__silphéon__note'):
+                            if bname in ('mcp__silphéon__note', 'mcp__linkplay__note'):
                                 path = inp.get('path')
                                 if path and inp.get('description'):
                                     seen_notes[path] = inp
-                            elif bname in ('mcp__silphéon__batch_notes', 'mcp__silphéon__batch_notes'):
+                            elif bname in ('mcp__silphéon__batch_notes', 'mcp__linkplay__batch_notes'):
                                 game = inp.get('game', '')
                                 for note in inp.get('notes', []):
                                     path = note.get('path')
@@ -468,127 +460,6 @@ def detect_rom_type(path: str) -> str:
     elif ext in ('.xci', '.nsp'):
         return 'switch'
     return 'unknown'
-
-
-
-def read_switch_header(path: str) -> dict:
-    """Open Switch ROM, fingerprint game code by checking spec PERSONAL_PATHs against file listing."""
-    sw = open_switch_rom(path)
-    files = sw.files
-    # Walk all SDK subclasses that have CONTAINER indicating Switch
-    def _all_specs(cls):
-        for sub in cls.__subclasses__():
-            yield sub
-            yield from _all_specs(sub)
-    from Generations.sdk import SDK
-    for cls in _all_specs(SDK):
-        pp = getattr(cls, 'PERSONAL_PATH', None)
-        if not pp:
-            continue
-        if pp in files or any(f.startswith(pp + '/') for f in files):
-            gc = cls.GAME_CODES[0]
-            title = cls.TITLES[0]
-            return {'game_code': gc, 'game_title': title, 'region': 'World',
-                    'region_char': 'W', 'is_english': True, '_switch_rom': sw}
-    sw.close()
-    raise ValueError('Could not identify Switch ROM from file listing')
-
-def read_nds_banner_title(path: str, banner_offset: int) -> str:
-    """Read English title from NDS banner (UTF-16LE at banner+0x340)."""
-    try:
-        with open(path, 'rb') as f:
-            f.seek(banner_offset + 0x340)
-            title_bytes = f.read(256)
-            title = title_bytes.decode('utf-16-le', errors='ignore')
-            title = title.split('\x00')[0]
-            lines = title.split('\n')
-            if len(lines) >= 2:
-                return f"{lines[0]} {lines[1]}".strip()
-            return lines[0].strip() if lines else ""
-    except:
-        return ""
-
-
-def read_nds_header(path: str) -> dict:
-    """Read NDS ROM header for game code, title, etc."""
-    with open(path, 'rb') as f:
-        short_title = f.read(12).decode('ascii', errors='ignore').strip('\x00')
-        full_code = f.read(4).decode('ascii', errors='ignore')
-        f.seek(0x68)
-        banner_offset = struct.unpack('<I', f.read(4))[0]
-
-    game_code = full_code[:3] if len(full_code) >= 3 else full_code
-    region_char = full_code[3] if len(full_code) >= 4 else 'E'
-    region = REGION_MAP.get(region_char, 'INT')
-    english_title = read_nds_banner_title(path, banner_offset) if banner_offset else ""
-    is_english = bool(english_title and any(c.isalpha() for c in english_title))
-
-    return {
-        'game_code': game_code,
-        'full_code': full_code,
-        'region_char': region_char,
-        'short_title': short_title,
-        'game_title': english_title if is_english else short_title,
-        'is_english': is_english,
-        'region': region
-    }
-
-
-def read_gba_header(path: str) -> dict:
-    """Read GBA ROM header."""
-    with open(path, 'rb') as f:
-        f.seek(0xA0)
-        title = f.read(12).decode('ascii', errors='ignore').strip('\x00')
-        full_code = f.read(4).decode('ascii', errors='ignore')
-
-    # GBA uses the full 4-char code as game_code (BPRE, AXVE, BPEE, etc.)
-    # unlike NDS which strips the region char
-    game_code = full_code.strip() if full_code.strip() else full_code[:3]
-    region_char = full_code[3] if len(full_code) >= 4 else 'E'
-    region = REGION_MAP.get(region_char, 'US')
-
-    return {
-        'game_code': game_code,
-        'full_code': full_code,
-        'region_char': region_char,
-        'game_title': title,
-        'region': region,
-        'is_english': region_char in ('E', 'P', 'D', 'F', 'S', 'I'),
-    }
-
-
-def read_gb_header(path: str) -> dict:
-    """Read GB/GBC ROM header."""
-    with open(path, 'rb') as f:
-        data = f.read(0x150)
-
-    # GBC header: 0x134-0x13E = 11B game title, 0x13F-0x142 = 4B manufacturer code (NOT part of title)
-    title = data[0x134:0x13F].decode('ascii', errors='ignore').strip('\x00').strip()
-    region_byte = data[0x14A] if len(data) > 0x14A else 0x01
-    region = 'JP' if region_byte == 0x00 else 'US'
-    region_char = 'J' if region == 'JP' else 'E'
-    is_english = region != 'JP'
-
-    # Use full title as game code (GB has no 4-char code like GBA/NDS)
-    # Normalize: "POKEMON RED" -> "PMR", "POKEMON BLUE" -> "PMB" etc.
-    _GB_GAME_CODES = {
-        'POKEMON RED':    'PMR', 'POKEMON BLUE':   'PMB', 'POKEMON BLU':  'PMB',
-        'POKEMON YELLOW': 'PMY', 'POKEMON GREEN':  'PMG', 'POKEMON YEL': 'PMY',
-        'POKEMON_GLDAAUE':'PMG2','POKEMON_GLD':    'PMG2','POKEMON GOLD':   'PMG2',
-        'PM_CRYSTAL':     'PMC', 'POKEMON CRYSTAL':'PMC',
-        'POKEMON SILVER': 'PMS',
-    }
-    game_code = _GB_GAME_CODES.get(title.upper(), title[:3].upper())
-
-    return {
-        'game_code': game_code,
-        'full_code': title[:4] if len(title) >= 4 else title,
-        'region_char': region_char,
-        'game_title': title,
-        'region': region,
-        'is_english': is_english,
-    }
-
 
 # Shared flipnotes — build from class chain, no merged dict needed
 def _build_flipnote_pairs():
@@ -835,7 +706,7 @@ def build_3ds_structure(romfs_files: dict, fh, rom_path: str) -> tuple:
 
         # Check if it's a GARC
         try:
-            data, _ = read_garc_sub(fh, abs_off, 0)
+            data = read_garc_sub(fh, abs_off, 0)
             # If read_garc_sub succeeded, it's a GARC
             garc_files = read_garc_all(fh, abs_off)
             file_info['type'] = 'garc'
@@ -1035,23 +906,55 @@ def _notes_for_path(path: str) -> str:
 
 # ============ Tool Handlers ============
 
-async def spotlight(path: str) -> dict:
+def _verify_narcs(narcs, spec):
+    """Filter narcs to paths that actually exist in the loaded ROM."""
+    if not spec or not hasattr(spec, 'rom_type'):
+        return {k: v for k, v in narcs.items() if v is not None}
+    out = {}
+    for role, path in narcs.items():
+        if path is None:
+            continue
+        if spec.rom_type == 'switch':
+            fs = spec.switch_rom.files
+            ti = getattr(spec, 'trinity_index', None)
+            pfx = path.rstrip('/') + '/'
+            if path in fs or any(f.startswith(pfx) for f in fs):
+                out[role] = path
+            elif ti and (path in ti or any(f.startswith(pfx) for f in ti)):
+                out[role] = path
+        elif spec.rom_type == '3ds':
+            fs = spec.romfs_files
+            pfx = path.rstrip('/') + '/'
+            if path in fs or any(f.startswith(pfx) for f in fs):
+                out[role] = path
+        elif spec.rom_type == 'nds':
+            try:
+                spec.rom.getFileByName(path)
+                out[role] = path
+            except Exception:
+                pass
+        else:
+            out[role] = path
+    return out
+
+
+async def spotlight(path: str, update: str = None) -> dict:
     """Open a ROM file for exploration. Multiple ROMs can be open simultaneously."""
-    global current_rom
+    # Models always emit straight apostrophe (U+0027), never curly (U+2019).
+    # Normalize unconditionally so filenames with curly quotes resolve.
+    path = path.replace("'", "’")
+    global current_rom, current_flipnote
 
     rom_type = detect_rom_type(path)
 
-    # Peek at header to check if already loaded
-    if rom_type == 'nds':
-        header = read_nds_header(path)
-    elif rom_type == '3ds':
+    # Read header — SDK handles NDS/GBA/GB/Switch, 3DS still separate
+    if rom_type == '3ds':
         header = read_3ds_header(path)
-    elif rom_type in ('gba', 'gbc', 'gb'):
-        header = read_gba_header(path) if rom_type == 'gba' else read_gb_header(path)
-    elif rom_type == 'switch':
-        header = read_switch_header(path)
     else:
-        return {"error": f"Unknown ROM type: {path}"}
+        try:
+            header = SDK.read_header(path, update)  # update: optional Switch update layered over the base game
+        except ValueError as e:
+            return {"error": str(e)}
 
     gc = header['game_code']
     spec_class = SDK.get_spec(gc)
@@ -1060,13 +963,16 @@ async def spotlight(path: str) -> dict:
     # Build backward-compat dicts from spec (bridges until all callers use spec directly)
     if spec:
         _narcs = SDK.spec_narcs(spec)
-        _title = spec.TITLES[spec.GAME_CODES.index(gc)] if gc in spec.GAME_CODES else gc
+        _tid = header.get('title_id')
+        _title = spec.TITLES[spec.TITLE_IDS.index(_tid)] if _tid and hasattr(spec, 'TITLE_IDS') and _tid in spec.TITLE_IDS else (spec.TITLES[spec.GAME_CODES.index(gc)] if gc in spec.GAME_CODES else gc)
         _game_info = {'title': _title, 'gen': getattr(spec, 'GEN', None),
                       'platform': getattr(spec, 'PLATFORM', 'Unknown'),
                       'year': getattr(spec, 'YEAR', None), 'narcs': _narcs}
     else:
         _narcs = {}
         _game_info = {}
+    if spec is None and gc not in loaded_roms:
+        return {"error": f"Unsupported game: no Generations/ class claims game code '{gc}' ({header.get('game_title', '?')})."}
 
     # Already loaded? Switch to it — but still show the full summary card
     if gc in loaded_roms:
@@ -1074,16 +980,22 @@ async def spotlight(path: str) -> dict:
         current_rom = spec
         # Run any post-load scans that may not have existed when ROM was first loaded
         if gc in ('IRE', 'IRD') and 'tournament_classes' not in current_rom.text_tables:
-            Unova_sequel.SCAN_PWT_TOURNAMENTS(current_rom.text_tables)
-            Unova_sequel.BUILD_PWT_MAPS(current_rom.text_tables)
+            current_rom.bootstrap_pwt()
+        if gc in ('IRE', 'IRD') and not hasattr(current_rom, '_gym_locations'):
+            current_rom.bootstrap_locations()
         game_info = _game_info
-        narcs = _narcs
+        narcs = _verify_narcs(_narcs, current_rom)
         icr_done = bool(eonet_labels.get(gc))
+        # Look up the correct flipnote for THIS game, not whatever was active before
+        _fpn = find_flipnote(gc)
+        if _fpn:
+            with open(_fpn, 'r', encoding='utf-8') as f:
+                current_flipnote = {'path': str(_fpn), 'data': json.load(f)}
         text = _build_spotlight_text(
             gc, header, rom_type, game_info, narcs,
             {'status': 'ok', 'gen': current_rom.GEN,
              'detected': {k: True for k, v in current_rom.text_tables.items() if isinstance(v, list) and isinstance(k, str)}},
-            current_flipnote['path'],
+            str(_fpn) if _fpn else current_flipnote['path'],
             spec.tm_table or [],
             list(loaded_roms.keys()), icr_done
         )
@@ -1157,6 +1069,10 @@ async def spotlight(path: str) -> dict:
         spec.arm7_data = arm7_data
         spec.overlays = overlays
         spec.compression_state = {}
+        if getattr(spec, 'CONTAINER', None) == 'trinity':
+            trpfs_path = getattr(spec, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+            trpfd_path = getattr(spec, 'TRINITY_DIR_PATH', 'arc/data.trpfd')
+            spec.trinity_index = build_trinity_index(sw, trpfs_path, trpfd_path)
         current_rom = spec
 
         # Pre-set current_rom.GEN before bootstrapping text tables
@@ -1199,7 +1115,8 @@ async def spotlight(path: str) -> dict:
         # Seed current_rom.narc_roles from spec paths so decoders work before BFS completes
         for role, narc_path in _narcs.items():
             if role != 'text' and narc_path not in current_rom.narc_roles:
-                current_rom.narc_roles[narc_path] = role
+                # Collapse pwt_* roles → 'pwt' so one decoder handles all PWT NARCs
+                current_rom.narc_roles[narc_path] = 'pwt' if role.startswith('pwt_') else role
 
     elif rom_type == '3ds':
         fh, romfs_files = open_3ds_romfs(path)
@@ -1213,6 +1130,10 @@ async def spotlight(path: str) -> dict:
         spec.romfs_files = romfs_files
         spec.code_data = code_data
         spec.compression_state = {}
+        if getattr(spec, 'CONTAINER', None) == 'trinity':
+            trpfs_path = getattr(spec, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+            trpfd_path = getattr(spec, 'TRINITY_DIR_PATH', 'arc/data.trpfd')
+            spec.trinity_index = build_trinity_index(sw, trpfs_path, trpfd_path)
         current_rom = spec
 
         fpn_path = find_flipnote(gc)
@@ -1239,9 +1160,18 @@ async def spotlight(path: str) -> dict:
             except Exception as e:
                 text_table_result = {"error": str(e)}
 
+        # Build personal container index map (species_id -> container_index)
+        personal_path = narcs.get('personal', '')
+        if personal_path and hasattr(spec, 'build_personal_index'):
+            try:
+                raw = sw.read_file(personal_path)
+                spec.build_personal_index(raw)
+            except Exception:
+                pass
+
         for role, np in _narcs.items():
             if role != 'text' and np not in current_rom.narc_roles:
-                current_rom.narc_roles[np] = role
+                current_rom.narc_roles[np] = 'pwt' if role.startswith('pwt_') else role
 
         # Discover TM table from ExeFS .code
         if code_data:
@@ -1250,7 +1180,7 @@ async def spotlight(path: str) -> dict:
                 text_table_result['tm_count'] = len(spec.tm_table)
 
     elif rom_type == 'switch':
-        sw = header.pop('_switch_rom')  # LéSwitch.SwitchROM from read_switch_header
+        sw = header.pop('_switch_rom')  # LéSwitch.SwitchROM from SDK.read_header
 
         spec.rom_type = 'switch'
         spec.rom_path = path
@@ -1258,6 +1188,10 @@ async def spotlight(path: str) -> dict:
         spec.switch_rom = sw
         spec.romfs_files = sw.files  # {path: (offset, size)} — same interface as 3DS
         spec.compression_state = {}
+        if getattr(spec, 'CONTAINER', None) == 'trinity':
+            trpfs_path = getattr(spec, 'TRINITY_DATA_PATH', 'arc/data.trpfs')
+            trpfd_path = getattr(spec, 'TRINITY_DIR_PATH', 'arc/data.trpfd')
+            spec.trinity_index = build_trinity_index(sw, trpfs_path, trpfd_path)
         current_rom = spec
 
         fpn_path = find_flipnote(gc)
@@ -1274,22 +1208,34 @@ async def spotlight(path: str) -> dict:
         game_info = _game_info
         narcs = _narcs
 
-        # Bootstrap text — same Gen V cipher (0x2983) all the way through Switch
+        # Bootstrap text — same pattern as NDS/3DS: get files, hand to spec
         text_path = narcs.get('text', '')
         if text_path:
-            # Read all files under text path
-            text_files = []
-            for fpath in sorted(sw.files.keys()):
-                if fpath.startswith(text_path):
-                    text_files.append(sw.read_file(fpath))
-            if text_files:
-                spec.bootstrap_text(text_files)
-                text_table_result = {"status": "ok", "gen": spec.GEN, "file_count": len(text_files),
+            narc = spec.get_narc(text_path)
+            if narc and narc.files:
+                spec.bootstrap_text(narc.files)
+                text_table_result = {"status": "ok", "gen": spec.GEN, "file_count": len(narc.files),
                                      "detected": {k: True for k in spec.text_tables if isinstance(k, str)}}
+
+        # Trinity trainer lookup — 3-hop chain lives in the spec
+        if getattr(spec, 'CONTAINER', None) == 'trinity' and hasattr(spec, 'trinity_index'):
+            try:
+                spec.build_trainer_lookup()
+            except Exception:
+                pass
 
         for role, np in _narcs.items():
             if role != 'text' and np not in current_rom.narc_roles:
-                current_rom.narc_roles[np] = role
+                current_rom.narc_roles[np] = 'pwt' if role.startswith('pwt_') else role
+
+        # Build personal container index map (species_id -> container_index)
+        personal_path = narcs.get('personal', '')
+        if personal_path and hasattr(spec, 'build_personal_index'):
+            try:
+                raw = sw.read_file(personal_path)
+                spec.build_personal_index(raw)
+            except Exception:
+                pass
 
     else:  # gba/gbc/gb
         spec.tm_table = []  # GB/GBC/GBA has no ARM9 TM table
@@ -1335,16 +1281,16 @@ async def spotlight(path: str) -> dict:
 
         # PWT tournament participant scan (B2W2 only — no-op for other games)
         if rom_type == 'nds' and gc in ('IRE', 'IRD'):
-            Unova_sequel.SCAN_PWT_TOURNAMENTS(current_rom.text_tables)
-            Unova_sequel.BUILD_PWT_MAPS(current_rom.text_tables)
+            current_rom.bootstrap_pwt()
+            current_rom.bootstrap_locations()
 
         # Discover data table offsets from the ROM itself (no hardcoding)
         if rom_type == 'gba':
-            gen3_offsets = Hoenn_rse.DISCOVER_TABLES()
+            gen3_offsets = spec.DISCOVER_TABLES(current_rom._current_rom_ref())
             if gen3_offsets:
                 text_table_result["gen3_tables"] = f"personal@0x{gen3_offsets.get('personal_base',0):X} move@0x{gen3_offsets.get('move_base',0):X}"
         elif rom_type in ('gb', 'gbc'):
-            gen1_offsets = Kanto_rbg.DISCOVER_TABLES()
+            gen1_offsets = spec.DISCOVER_TABLES()
             if gen1_offsets:
                 text_table_result["gen1_tables"] = (
                     f"personal@0x{gen1_offsets.get('personal_base',0):X} "
@@ -1376,15 +1322,18 @@ async def spotlight(path: str) -> dict:
     except Exception:
         pass
 
+    # Verify paths exist in this ROM's filesystem
+    _narcs = _verify_narcs(_narcs, current_rom)
+
     # Populate current_rom.narc_roles from spec paths — known paths available before BFS.
     if current_rom and current_rom.rom_type in ('nds', '3ds', 'switch'):
         for _role, _path in _narcs.items():
             if _role != 'text':
-                current_rom.narc_roles[_path] = _role
+                current_rom.narc_roles[_path] = 'pwt' if _role.startswith('pwt_') else _role
 
     # Build Eonet in background for interactive spotlight calls only.
     # During restore, _do_pending_restore runs BFS sequentially — skip here to avoid double-BFS race.
-    if current_rom and current_rom.rom_type in ('nds', '3ds', 'switch') and not _rom_restore_in_progress:
+    if current_rom and current_rom.rom_type in ('nds', '3ds', 'switch') and not _rom_restore_in_progress and _build_eonet is not None:
         import asyncio as _asyncio
         _gc_capture = gc
         try:
@@ -1421,6 +1370,13 @@ def _short_game_name(gc: str) -> str:
     return _KNOWN.get(gc)
 
 
+_LANG_NAMES = {
+    'ja': 'Japanese', 'ja-kanji': 'Japanese (Kanji)',
+    'en': 'English', 'fr': 'French', 'it': 'Italian',
+    'de': 'German', 'es': 'Spanish', 'ko': 'Korean',
+    'zh-Hans': 'Chinese (Simplified)', 'zh-Hant': 'Chinese (Traditional)',
+}
+
 def _build_spotlight_text(gc, header, rom_type, game_info, narcs,
                           text_table_result, fpn_path, tm_table_list,
                           other_loaded, icr_done=False):
@@ -1429,7 +1385,7 @@ def _build_spotlight_text(gc, header, rom_type, game_info, narcs,
     SEP2 = '─' * 45
 
     # ── Header ──────────────────────────────────────────────────────────────
-    title    = (game_info.get('title') or header.get('game_title', gc)).replace(' Nintendo','').replace(' Game Freak','').replace(' Version','').strip()
+    title    = (game_info.get('title') or header.get('game_title', gc)).replace(' Nintendo','').replace(' Game Freak','').removesuffix(' Version').strip()
     region   = header.get('region', 'US')
     platform = game_info.get('platform', 'Unknown Platform')
     year     = game_info.get('year', '?')
@@ -1461,10 +1417,10 @@ def _build_spotlight_text(gc, header, rom_type, game_info, narcs,
             for role, display in _SOLO:
                 if role in narcs:
                     lines.append(f'  {display} (at {narcs[role]})')
-            if 'trdata' in narcs and 'trpoke' in narcs:
-                lines.append(f'  Trainers (at {narcs["trdata"]}, {narcs["trpoke"]})')
-            elif 'trdata' in narcs:
-                lines.append(f'  Trainers (at {narcs["trdata"]})')
+            if 'trainer' in narcs and 'trpoke' in narcs:
+                lines.append(f'  Trainers (at {narcs["trainer"]}, {narcs["trpoke"]})')
+            elif 'trainer' in narcs:
+                lines.append(f'  Trainers (at {narcs["trainer"]})')
         else:
             # GB/GBC — show scanned text table names
             _SCAN_NAMES = {
@@ -1480,6 +1436,16 @@ def _build_spotlight_text(gc, header, rom_type, game_info, narcs,
         lines.append('')
     else:
         lines.append('Text tables: not yet decoded.\n')
+
+    # ── Languages ────────────────────────────────────────────────────────────
+    _spec = loaded_roms.get(gc)
+    if _spec and getattr(_spec, 'LANGUAGES', ()):
+        _cur = getattr(_spec, '_lang', 'en')
+        _langs = [f'**{_LANG_NAMES.get(c, c)}**' if c == _cur else _LANG_NAMES.get(c, c)
+                  for c in _spec.LANGUAGES]
+        lines.append(f'Languages: {", ".join(_langs)}')
+        lines.append(f'  Current: {_LANG_NAMES.get(_cur, _cur)} — switch via decipher with lang parameter')
+        lines.append('')
 
     # TM/HM — dynamic breakdown from tm_table list
     if tm_table_list:
@@ -1556,12 +1522,25 @@ async def return_tool(save: bool = False) -> dict:
 
 
 def _summarize_3ds(path: str, expand_narcs: bool = False) -> dict:
-    """Summarize 3DS RomFS filesystem at a path."""
-    fs = current_rom.romfs_files
+    """Summarize 3DS/Switch filesystem at a path. Trinity-aware."""
+    fs = dict(current_rom.romfs_files) if current_rom.romfs_files else {}
     fh = current_rom.romfs_fh
+    ti = getattr(current_rom, 'trinity_index', None)
+    if ti:
+        fs.update(ti)
     contents = []
 
     clean = path.strip('/')
+
+    # Drill into a Trinity folder (list files under prefix)
+    if clean and ti and clean not in fs:
+        pfx = clean.rstrip('/') + '/'
+        matches = sorted(k for k in ti if k.startswith(pfx) and '/' not in k[len(pfx):])
+        if matches:
+            for f in matches:
+                name = f[len(pfx):]
+                contents.append({"name": name, "type": "file", "size": ti[f][1], "path": f})
+            return {"path": clean, "type": "trinity_folder", "file_count": len(matches), "contents": contents}
 
     # Drill into a specific GARC (e.g. "a/0/1/7")
     if clean and clean in fs:
@@ -1720,7 +1699,7 @@ async def summarize(path: str = "/", expand_narcs: bool = False) -> dict:
     return {"path": path, "contents": contents}
 
 
-async def decipher(path: str, offset: int = 0, length: int = None, decompress: bool = True) -> str:
+async def decipher(path: str, offset: int = 0, length: int = None, decompress: bool = True, lang: str = None) -> str:
     """Read and decode files. Auto-decompresses and auto-decodes known structures (trainers, pokemon, encounters, etc.)."""
     global _user_active_gc
     # Multi-file: comma-separated paths
@@ -1739,6 +1718,30 @@ async def decipher(path: str, offset: int = 0, length: int = None, decompress: b
     _gc = _user_active_gc or (current_rom.header['game_code'] if current_rom else None)
     if _gc and _gc in loaded_roms and current_rom.header['game_code'] != _gc:
         _switch_rom(_gc)
+
+    # ── Language switch (sticky) ──────────────────────────────────────────────
+    if lang and current_rom:
+        _spec = current_rom
+        if hasattr(_spec, 'LANGUAGES') and _spec.LANGUAGES:
+            if lang not in _spec.LANGUAGES:
+                return f"Error: '{lang}' not available. Options: {', '.join(_spec.LANGUAGES)}"
+            if lang != getattr(_spec, '_lang', 'en'):
+                _spec.set_language(lang)
+                # Re-bootstrap text from the new language GARC (lightweight, no full reload)
+                _tp = _spec.TEXT_PATH
+                if _spec.rom_type == '3ds' and _tp in _spec.romfs_files:
+                    from xoleon import read_garc_all
+                    _garc_files = read_garc_all(_spec.romfs_fh, _spec.romfs_files[_tp][0])
+                    _spec.bootstrap_text(_garc_files)
+                elif _spec.rom_type == 'nds' and hasattr(_spec, 'rom'):
+                    import ndspy.narc
+                    _narc_data = _spec.rom.getFileByName(_tp)
+                    _spec.text_narc = ndspy.narc.NARC(_narc_data)
+                    _spec.bootstrap_text(_spec.text_narc.files)
+                elif _spec.rom_type == 'switch':
+                    _narc = _spec.get_narc(_tp)
+                    if _narc and _narc.files:
+                        _spec.bootstrap_text(_narc.files)
 
     # Cross-ROM prefix: "IRE:a/0/1/6:1" or "BPRE:trainer:BROCK"
     gc_prefix, clean_path = _parse_rom_prefix(path)
@@ -1779,11 +1782,13 @@ async def decipher(path: str, offset: int = 0, length: int = None, decompress: b
             role = current_rom.narc_roles.get(narc_path)
             if not role:  # prefix match for folder-based systems (donut, dim, etc.)
                 for known, r in current_rom.narc_roles.items():
-                    if narc_path.startswith(known + '/'):
+                    if known and narc_path.startswith(known + '/'):
                         role = r
                         break
             decoded = spec.decode(role, data, file_idx, path=narc_path) if spec and role else None
             _path_notes = _notes_for_path(path)
+            if isinstance(decoded, tuple):
+                decoded, path = decoded
             if isinstance(decoded, str):
                 # Successfully decoded — frame it
                 out = decoded
@@ -1901,6 +1906,21 @@ async def sketch(path: str, data: str, offset: int = 0, encoding: str = "hex") -
             rom.setFileByName(path.lstrip('/'), bytes(new_data))
 
             return {"written": len(data_bytes), "path": path}
+        except Exception as e:
+            return {"error": str(e)}
+
+    elif current_rom.rom_type in ('3ds', 'switch'):
+        try:
+            current_data = bytearray(current_rom.read_file(path))
+            current_data[offset:offset + len(data_bytes)] = data_bytes
+            current_data = bytes(current_data)
+            # Cache modified file for record to pick up
+            if not hasattr(current_rom, '_sketch_cache'):
+                current_rom._sketch_cache = {}
+            current_rom._sketch_cache[path] = current_data
+            # Also update narc cache so subsequent reads see the edit
+            current_rom._narc_cache.pop(path, None)
+            return {"written": len(data_bytes), "path": path, "offset": offset}
         except Exception as e:
             return {"error": str(e)}
 
@@ -2670,6 +2690,12 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
     # Text table name lookup
     if name:
         query = name.lower()
+        enc_only = table == 'encounters'
+        trainers_only = table == 'trainers'
+        learnsets_only = table == 'learnsets'
+        personal_only = table == 'personal'
+        evolutions_only = table == 'evolutions'
+        if enc_only or trainers_only or learnsets_only or personal_only or evolutions_only: table = None
         # If the query matches an alias, also search for the canonical name
         alias_target = _NAME_ALIASES.get(query)
         results = []
@@ -2677,7 +2703,14 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
             tables_to_search = {table: current_rom.text_tables[table]}
         else:
             # Search named tables + any files sketch has touched
-            tables_to_search = {k: v for k, v in current_rom.text_tables.items() if isinstance(k, str) and isinstance(v, list)}
+            if getattr(current_rom, 'CONTAINER', '') in ('gb', 'gbc', 'gba'):
+                tables_to_search = {k: v for k, v in current_rom.text_tables.items() if isinstance(v, list)}
+            else:
+                tables_to_search = {k: v for k, v in current_rom.text_tables.items() if isinstance(k, str) and isinstance(v, list)}
+            # Skip carried-over trainer text tables when spec has TRAINER_MAP (PLA-specific, not used by other games)
+            if getattr(current_rom, 'TRAINER_MAP', None):
+                tables_to_search.pop('trainer_names', None)
+                tables_to_search.pop('trainer_classes', None)
             for fidx in current_rom._text_modified:
                 if fidx in current_rom.text_tables and isinstance(current_rom.text_tables[fidx], list):
                     tables_to_search[fidx] = current_rom.text_tables[fidx]
@@ -2697,7 +2730,7 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
         if class_hits and current_rom:
             try:
                 gc = getattr(current_rom, 'header', {}).get('game_code', '')
-                trdata_path = getattr(current_rom, 'TRDATA_PATH', None) if current_rom else None
+                trdata_path = getattr(current_rom, 'TRAINER_PATH', None) if current_rom else None
                 if trdata_path:
                     # NDS: resolve class ID → trdata file indices
                     td_files = current_rom.get_narc(trdata_path).files
@@ -2705,24 +2738,115 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                         cid = ch['index']
                         for fi, td in enumerate(td_files):
                             if len(td) >= 2 and td[1] == cid:
-                                results.append({'table': 'trdata', 'index': fi, 'name': ch['name']})
+                                results.append({'table': 'trainer', 'index': fi, 'name': ch['name']})
                 elif getattr(current_rom, 'rom_type', None) in ('gb', 'gbc', 'gba'):
                     # GB/GBC/GBA: emit trainer:NAME path — name IS the decipher key
                     for ch in class_hits:
                         ch.setdefault('paths', []).append(f"trainer:{ch['name']}")
             except Exception:
                 pass
+        _item_hits = [r for r in results if r.get('table') == 'items']
+        _abil_hits = [r for r in results if r.get('table') == 'abilities']
+        _spec_hits = [r for r in results if r.get('table') == 'species']
+        _move_hits = [r for r in results if r.get('table') == 'moves']
+        _abil_species, _item_species = set(), set()
+        if (_abil_hits or _item_hits) and (personal_only or trainers_only or enc_only) and current_rom:
+            _pp = getattr(current_rom, 'PERSONAL_PATH', None)
+            if _pp:
+                try:
+                    _pfiles = current_rom.get_narc(_pp).files
+                    _sp = current_rom.text_tables.get('species', [])
+                    _g4 = getattr(current_rom, 'GEN', 5) <= 4
+                    _a_offs = (0x16, 0x17) if _g4 else (0x18, 0x19, 0x1A)
+                    _i_offs = (0x0C, 0x0E) if _g4 else (0x0C, 0x0E, 0x10)
+                    for fi, d in enumerate(_pfiles):
+                        _nm = _sp[fi] if fi < len(_sp) else f"#{fi}"
+                        for h in _abil_hits:
+                            if any(o < len(d) and d[o] == h['index'] for o in _a_offs):
+                                _abil_species.add(fi)
+                                if personal_only:
+                                    results.append({'table': 'personal', 'index': fi, 'name': _nm, 'paths': [f"{_pp}:{fi}"]})
+                        for h in _item_hits:
+                            if any(o + 2 <= len(d) and int.from_bytes(d[o:o+2], 'little') == h['index'] for o in _i_offs):
+                                _item_species.add(fi)
+                                if personal_only:
+                                    results.append({'table': 'personal', 'index': fi, 'name': _nm, 'paths': [f"{_pp}:{fi}"]})
+                except Exception:
+                    pass
+        # Reverse lookup: trainers — species, items, moves, abilities all checked in one pass
+        if trainers_only and (_spec_hits or _item_hits or _move_hits or _abil_species) and current_rom:
+            _tp = getattr(current_rom, 'TRPOKE_PATH', None)
+            _td = getattr(current_rom, 'TRAINER_PATH', None)
+            if _tp and _td:
+                try:
+                    _g4 = getattr(current_rom, 'GEN', 5) <= 4
+                    _esizes = {0: 6, 1: 14, 2: 8, 3: 16} if _g4 else {0: 8, 1: 16, 2: 10, 3: 18}
+                    _poke_hdr = 6 if _g4 else 8
+                    _tdfiles = current_rom.get_narc(_td).files
+                    _tpfiles = current_rom.get_narc(_tp).files
+                    for fi in range(min(len(_tdfiles), len(_tpfiles))):
+                        td, tp = _tdfiles[fi], _tpfiles[fi]
+                        if len(td) < 4 or td[3] == 0: continue
+                        flags = td[0] & 3
+                        esz = _esizes.get(flags, 8)
+                        npoke = td[3]
+                        matched = False
+                        # trdata battle items at offsets 4,6,8,10
+                        if _item_hits and not matched:
+                            for h in _item_hits:
+                                if any(int.from_bytes(td[4+i*2:6+i*2], 'little') == h['index'] for i in range(4) if 6+i*2 <= len(td)):
+                                    results.append({'table': 'trainer', 'index': fi, 'name': h['name'], 'paths': [f"{_td}:{fi}"]})
+                                    matched = True; break
+                        for j in range(npoke):
+                            if matched: break
+                            base = j * esz
+                            if base + 6 > len(tp): break
+                            sid = int.from_bytes(tp[base+4:base+6], 'little')
+                            # species
+                            for h in _spec_hits:
+                                if sid == h['index']:
+                                    results.append({'table': 'trainer', 'index': fi, 'name': h['name'], 'paths': [f"{_td}:{fi}"]})
+                                    matched = True; break
+                            if matched: break
+                            # abilities via species
+                            if sid in _abil_species:
+                                results.append({'table': 'trainer', 'index': fi, 'name': _abil_hits[0]['name'], 'paths': [f"{_td}:{fi}"]})
+                                matched = True; break
+                            # held item in trpoke
+                            if _item_hits and flags & 2:
+                                hoff = base + _poke_hdr
+                                if hoff + 2 <= len(tp):
+                                    hid = int.from_bytes(tp[hoff:hoff+2], 'little')
+                                    for h in _item_hits:
+                                        if hid == h['index']:
+                                            results.append({'table': 'trainer', 'index': fi, 'name': h['name'], 'paths': [f"{_td}:{fi}"]})
+                                            matched = True; break
+                            if matched: break
+                            # moves in trpoke
+                            if _move_hits and flags & 1:
+                                mstart = base + _poke_hdr + (2 if flags & 2 else 0)
+                                for mi in range(4):
+                                    moff = mstart + mi * 2
+                                    if moff + 2 > len(tp): break
+                                    mid = int.from_bytes(tp[moff:moff+2], 'little')
+                                    for h in _move_hits:
+                                        if mid == h['index']:
+                                            results.append({'table': 'trainer', 'index': fi, 'name': h['name'], 'paths': [f"{_td}:{fi}"]})
+                                            matched = True; break
+                                    if matched: break
+                except Exception:
+                    pass
         # PWT: name-based lookup via pwt_name_to_entries → trainers_b paths
-        if Unova_sequel.pwt_name_to_entries and current_rom:
+        if current_rom.pwt_name_to_entries and current_rom:
             gc = getattr(current_rom, 'header', {}).get('game_code', '')
             if gc in ('IRE', 'IRD'):
                 q_lower = query.strip().lower()
-                tb_path = Unova_sequel.ROLE_PATH('pwt_trainers_b')
+                tb_path = getattr(current_rom, 'PWT_TRAINERS_B_PATH', None)
                 if tb_path:
-                    for pname, indices in Unova_sequel.pwt_name_to_entries.items():
+                    for pname, indices in current_rom.pwt_name_to_entries.items():
                         if q_lower in pname:
                             for idx in indices:
-                                tourns = Unova_sequel.pwt_entry_tournaments.get(idx, [])
+                                tourns = current_rom.pwt_entry_tournaments.get(idx, [])
                                 # Filter out unresolved generic names like "Tournament #18"
                                 named = [t for t in tourns if not t.startswith('Tournament #')]
                                 if named:
@@ -2734,6 +2858,24 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                                     'name': pname.title(),
                                     'paths': [plabel],
                                 })
+
+        # PLA-specific: TRAINER_MAP is a pre-built name→path dict unique to Legends Arceus
+        _tmap = getattr(current_rom, 'TRAINER_MAP', None)
+        if _tmap:
+            _sw_files = getattr(getattr(current_rom, 'switch_rom', None), 'files', {})
+            _ti = getattr(current_rom, 'trinity_index', None)
+            if _ti:
+                _sw_files = {**_sw_files, **_ti}
+            _tr_dir = getattr(current_rom, 'TRAINER_PATH', 'bin/trainer') + '/'
+            for i, (prefix, tname, tcls) in enumerate(_tmap):
+                if not ((tname and query in tname.lower()) or (tcls and query in tcls.lower()) or query in prefix):
+                    continue
+                fpaths = sorted(f for f in _sw_files if f.startswith(_tr_dir) and prefix in f.split('/')[-1])
+                results.append({'table': 'trainer_names', 'index': i, 'name': tname or prefix,
+                                'paths': fpaths or [f"{_tr_dir}trdata_{prefix}_01.bin"],
+                                'note': tcls})
+
+
 
         if not narc_path:
 
@@ -2768,31 +2910,88 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                     tbl, idx = r.get('table', ''), r.get('index', 0)
                     paths = r.setdefault('paths', [])
                     if tbl == 'species':
-                        for role in ('personal', 'learnsets', 'evolutions'):
+                        _psm = getattr(_spec, 'personal_species_map', None)
+                        cidx = _psm.get(idx, idx) if _psm else idx
+                        for role in ('personal', 'learnset', 'evolution'):
                             np = _narcs.get(role)
-                            if np: paths.append(f"{np}:{idx}")
+                            if np: paths.append(f"{np}:{cidx}")
+                        # Evolution enrichment
+                        _evo_path = _narcs.get('evolution')
+                        if _evo_path and _spec:
+                            try:
+                                _evo_data = current_rom.read_file(f"{_evo_path}:{cidx}")
+                                _evo_out = _spec.decode('evolution', _evo_data, cidx)
+                                if _evo_out:
+                                    _evo_body = '\n'.join(_evo_out.split('\n')[1:])
+                                    r['evolves'] = _evo_body
+                            except Exception:
+                                pass
+                        # Reverse lookup: where this species appears, with the fields each table reports (None/absent = format not written yet)
+                        _ie = current_rom.iter_encounters() if enc_only and callable(getattr(current_rom, 'iter_encounters', None)) else None
+                        if _ie is not None:
+                            _rows = [(t[:5], t[5] if len(t) > 5 else {}) for t in _ie]
+                            r['found_at'] = [dict(f, location=f.get('location', eid), form=fm, lo=lo, hi=hi) for (eid, sp, fm, lo, hi), f in _rows if sp == idx]
+                            r['encounter_paths'] = sorted({f['path'] for (eid, sp, fm, lo, hi), f in _rows if sp == idx and f.get('path')},
+                                                          key=lambda p: (p.rpartition(':')[0], int(p.rpartition(':')[2])))
+                            _locs = {e['location'] for e in r['found_at']}
+                            r['periods_at'] = {}
+                            for (eid, sp, fm, lo, hi), f in _rows:
+                                if f.get('period') and f.get('location', eid) in _locs:
+                                    r['periods_at'].setdefault((f.get('location', eid), f.get('method', '')), set()).add(f['period'])
                     elif tbl == 'moves':
                         np = _narcs.get('move_data')
                         if np: paths.append(f"{np}:{idx}")
+                        # Reverse lookup: which species learn this move (None = format not written yet)
+                        _it = current_rom.iter_learnsets() if learnsets_only and callable(getattr(current_rom, 'iter_learnsets', None)) else None
+                        if _it is not None:
+                            try:
+                                _sp = current_rom.text_tables.get('species', [])
+                                _by, _lpaths = [], []
+                                _lp = getattr(current_rom, 'LEARNSET_PATH', None)
+                                for fi, ls in _it:
+                                    _nm = _sp[fi] if fi < len(_sp) else f"form#{fi}"
+                                    _by += [f"{_nm} Lv{lv}" for lv, m in ls if m == idx]
+                                    if _lp and any(m == idx for lv, m in ls): _lpaths.append(f"{_lp}:{fi}")
+                                r['learned_by'] = _by
+                                r['learnset_paths'] = _lpaths
+                            except Exception as _e:
+                                r['learned_by'] = [f"(reverse lookup failed: {_e})"]
                     elif tbl == 'items':
-                        np = _narcs.get('items')
+                        np = _narcs.get('item')
                         if np: paths.append(f"{np}:{idx}")
                     elif tbl == 'location_names':
-                        np = _narcs.get('encounters', '')
+                        np = _narcs.get('encounter', '')
                         if np and _enc_loc:
                             for ei in sorted(ei for ei, li in _enc_loc.items() if li == idx):
                                 paths.append(f"{np}:{ei}")
 
+            # Abilities/items → encounters: find where species with this ability/held item appear
+            if enc_only and (_abil_species or _item_species) and current_rom:
+                _ie = current_rom.iter_encounters() if callable(getattr(current_rom, 'iter_encounters', None)) else None
+                if _ie is not None:
+                    _sp = current_rom.text_tables.get('species', [])
+                    _rows = [(t[:5], t[5] if len(t) > 5 else {}) for t in _ie]
+                    for sid in _abil_species | _item_species:
+                        _nm = _sp[sid] if sid < len(_sp) else f"#{sid}"
+                        fa = [dict(f, location=f.get('location', eid), form=fm, lo=lo, hi=hi) for (eid, sp, fm, lo, hi), f in _rows if sp == sid]
+                        if fa:
+                            _pa = {}
+                            _locs = {e.get('location') for e in fa}
+                            for (eid, sp, fm, lo, hi), f in _rows:
+                                if f.get('period') and f.get('location', eid) in _locs:
+                                    _pa.setdefault((f.get('location', eid), f.get('method', '')), set()).add(f['period'])
+                            results.append({'table': 'species', 'index': sid, 'name': _nm, 'found_at': fa, 'periods_at': _pa,
+                                            'encounter_paths': sorted({f['path'] for f in fa if f.get('path')})})
             # Difficulty filtering for B2W2: file 764 is the Challenge Mode boundary.
             # Files 0–763 = Normal Mode, 764–813 = Challenge Mode with different rosters.
             # Easy Mode has no separate files — runtime level scaling on Normal data.
             _BW2_CHALLENGE_START = 764
-            if difficulty and gen == 5 and results:
+            if difficulty and results:
                 gc = getattr(current_rom, 'header', {}).get('game_code', '') if current_rom else ''
                 if gc in ('IRE', 'IRD'):  # B2W2 only
                     diff = difficulty.lower()
-                    trdata_hits = [r for r in results if r.get('table') == 'trdata']
-                    other_hits = [r for r in results if r.get('table') != 'trdata']
+                    trdata_hits = [r for r in results if r.get('table') == 'trainer']
+                    other_hits = [r for r in results if r.get('table') != 'trainer']
                     if trdata_hits and diff in ('normal', 'challenge'):
                         if diff == 'normal':
                             filtered = [r for r in trdata_hits if r['index'] < _BW2_CHALLENGE_START]
@@ -2825,12 +3024,12 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
             if rival and current_rom:
                 try:
                     gc = getattr(current_rom, 'header', {}).get('game_code', '')
-                    trdata_path = getattr(current_rom, 'TRDATA_PATH', None) if current_rom else None
+                    trdata_path = getattr(current_rom, 'TRAINER_PATH', None) if current_rom else None
                     if trdata_path:
                         td_files = current_rom.get_narc(trdata_path).files
                         for fi, td in enumerate(td_files):
                             if len(td) >= 2 and td[1] in rival['class_ids']:
-                                results.append({'table': 'trdata', 'index': fi, 'name': rival['canonical']})
+                                results.append({'table': 'trainer', 'index': fi, 'name': rival['canonical']})
                         rival_note = rival.get('note', '')
                     elif getattr(current_rom, 'rom_type', None) in ('gba', 'gb', 'gbc'):
                         for off in current_rom.text_tables.get('trainer_offsets', []):
@@ -2859,7 +3058,38 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                 ranges.append(f"{start}-{prev}" if prev > start else str(start))
                 return ', '.join(ranges)
 
+            def _found_at_lines(rn, h):
+                """Species reverse lookup, shown straight from the fields each encounter table reports."""
+                fa, per = h['found_at'], h['periods_at']
+                if not fa:
+                    return ['', f"{rn} doesn't appear in any wild encounter table."]
+                groups = {}
+                for e in fa:
+                    g = groups.setdefault(e['location'], {}).setdefault((e.get('method', ''), e.get('variant', ''), e['form']),
+                                                                       {'lo': e['lo'], 'hi': e['hi'], 'periods': [], 'always': False})
+                    g['lo'], g['hi'] = min(g['lo'], e['lo']), max(g['hi'], e['hi'])
+                    if not e.get('period'): g['always'] = True
+                    elif e['period'] not in g['periods']: g['periods'].append(e['period'])
+                lines = [''] + _dowse_frame(f'Where to Encounter {rn}')
+                for loc, meths in groups.items():
+                    parts = []
+                    for (method, variant, form), g in meths.items():
+                        det = [f"Lv {g['lo']}" if g['lo'] == g['hi'] else f"Lv {g['lo']}\u2013{g['hi']}"]
+                        if g['periods'] and not g['always'] and len(g['periods']) < len(per.get((loc, method), ())):
+                            det.append('/'.join(g['periods']))
+                        if variant: det.append(variant)
+                        if form: det.append(f'form {form}')
+                        parts.append(f"{method} ({', '.join(det)})" if method else ', '.join(det))
+                    lines.append(f"  {loc}: {', '.join(parts)}")
+                by_narc = {}
+                for p in h['encounter_paths']:
+                    by_narc.setdefault(p.rpartition(':')[0], []).append(p)
+                for narc_p, ps in by_narc.items():
+                    lines += ['', f'Encounter files within {narc_p}:', ''] + [f'  decipher("{p}")' for p in ps]
+                return lines
+
             if not results:
+                out = [f"No matches for '{name}'."]
                 # Nothing found — check trainer_classes as fallback
                 if not table or table == 'trainer_names':
                     if 'trainer_names' in current_rom.text_tables and 'trainer_classes' in current_rom.text_tables:
@@ -2876,8 +3106,7 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                                 "Player-named rivals have no entry in trainer_names "
                                 "because the player sets their name at game start."
                             )
-                            return "\n".join(out)
-                return f"No results for '{name}'."
+                return "\n".join(out)
 
             # Group results by name
             from collections import OrderedDict
@@ -2889,7 +3118,7 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
             # NARC role labels
             gc = current_rom.header['game_code'] if current_rom else ''
             narcs = SDK.spec_narcs(current_rom) if current_rom and current_rom else {}
-            _ROLE_LABELS = {'trdata': 'TRData', 'trpoke': 'TRPoke', 'personal': 'Personal',
+            _ROLE_LABELS = {'trainer': 'TRData', 'trpoke': 'TRPoke', 'personal': 'Personal',
                            'learnsets': 'Learnsets', 'evolutions': 'Evolutions',
                            'moves': 'Moves', 'items': 'Items'}
 
@@ -2902,7 +3131,7 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
             trainer_names_set = set()
             for rn, hits in by_name.items():
                 for h in hits:
-                    if h.get('table') in ('trainer_names', 'trdata', 'trainer_classes') or str(h.get('table', '')).startswith('pwt_'):
+                    if h.get('table') in ('trainer_names', 'trainer', 'trainer_classes') or str(h.get('table', '')).startswith('pwt_'):
                         trainer_names_set.add(rn)
 
             # Show trainer results first (full format)
@@ -2915,53 +3144,94 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                 regular = [h for h in hits if not str(h.get('table', '')).startswith('pwt_')]
 
                 if regular:
-                    # Collect indices per NARC
-                    narc_indices = {}
-                    for h in regular:
-                        tbl = h.get('table', '')
-                        idx = h.get('index', 0)
-                        if tbl == 'trainer_names':
-                            for role in ('trdata', 'trpoke'):
-                                np = narcs.get(role)
+                    # Split: hits with real file paths (PLA TRAINER_MAP) vs index-based (NDS/Trinity)
+                    path_hits = [h for h in regular if h.get('paths') and not h['paths'][0].split(':')[-1].isdigit()]
+                    idx_hits = [h for h in regular if h not in path_hits]
+
+                    # Show file-path hits directly
+                    for h in path_hits:
+                        note = h.get('note', '')
+                        if note: out.append(f"  {note}")
+                        for fp in h.get('paths', []):
+                            out.append(f"  {fp}")
+
+                    # NDS-style: collect indices per NARC
+                    if idx_hits:
+                        narc_indices = {}
+                        for h in idx_hits:
+                            tbl = h.get('table', '')
+                            idx = h.get('index', 0)
+                            if tbl == 'trainer_names':
+                                _t2i = getattr(current_rom, '_trname_to_indices', None)
+                                if _t2i is not None:
+                                    # Trinity (SV/Z-A): text index → AHTB key → _trname_to_indices → real trdata indices
+                                    _text_path = narcs.get('text', '')
+                                    _ahtb_list = current_rom._ahtb_cache.get(_text_path, [])
+                                    if _ahtb_list:
+                                        _tn = current_rom.text_tables.get('trainer_names')
+                                        _tn_fidx = None
+                                        if _tn:
+                                            for _k, _v in current_rom.text_tables.items():
+                                                if isinstance(_k, int) and _v is _tn:
+                                                    _tn_fidx = _k; break
+                                        if _tn_fidx is not None and _tn_fidx < len(_ahtb_list):
+                                            _ahtb = current_rom.parse_ahtb(_ahtb_list[_tn_fidx])
+                                            if idx < len(_ahtb):
+                                                _, _key = _ahtb[idx]
+                                                _tr_path = narcs.get('trainer', '')
+                                                if _key in _t2i and _tr_path:
+                                                    for _didx in _t2i[_key]:
+                                                        narc_indices.setdefault(_tr_path, []).append(_didx)
+                                                        current_rom._dowse_resolved = rn
+                                else:
+                                    # DS/3DS: parallel arrays, text index = trdata index
+                                    for role in ('trainer', 'trpoke'):
+                                        np = narcs.get(role)
+                                        if np:
+                                            narc_indices.setdefault(np, []).append(idx)
+                            elif tbl == 'trainer':
+                                np = narcs.get('trainer')
                                 if np:
                                     narc_indices.setdefault(np, []).append(idx)
-                        elif tbl == 'trdata':
-                            np = narcs.get('trdata')
-                            if np:
-                                narc_indices.setdefault(np, []).append(idx)
-                                tp = narcs.get('trpoke')
-                                if tp:
-                                    narc_indices.setdefault(tp, []).append(idx)
+                                    tp = narcs.get('trpoke')
+                                    if tp:
+                                        narc_indices.setdefault(tp, []).append(idx)
 
-                    # Merge NARCs sharing the same indices (trdata + trpoke)
-                    idx_groups = {}
-                    for np, idxs in narc_indices.items():
-                        key = tuple(sorted(set(idxs)))
-                        idx_groups.setdefault(key, []).append(np)
+                        idx_groups = {}
+                        for np, idxs in narc_indices.items():
+                            key = tuple(sorted(set(idxs)))
+                            idx_groups.setdefault(key, []).append(np)
 
-                    for idxs, narc_paths in idx_groups.items():
-                        labels = []
-                        for np in sorted(narc_paths):
-                            rlabel = ''
-                            for role, rpath in narcs.items():
-                                if rpath == np and role in _ROLE_LABELS:
-                                    rlabel = _ROLE_LABELS[role]
-                                    break
-                            labels.append(f"{np} ({rlabel})" if rlabel else np)
-                        narc_str = ' and '.join(labels)
-                        out.append(f"")
-                        out.append(f"Indices within {narc_str}:")
-                        out.append(f"")
-                        out.append(_compress_indices(list(idxs)))
+                        for idxs, narc_paths in idx_groups.items():
+                            labels = []
+                            for np in sorted(narc_paths):
+                                rlabel = ''
+                                for role, rpath in narcs.items():
+                                    if rpath == np and role in _ROLE_LABELS:
+                                        rlabel = _ROLE_LABELS[role]
+                                        break
+                                labels.append(f"{np} ({rlabel})" if rlabel else np)
+                            narc_str = ' and '.join(labels)
+                            out.append(f"")
+                            out.append(f"Indices within {narc_str}:")
+                            out.append(f"")
+                            _primary_np = sorted(narc_paths)[0]
+                            _i2trid = getattr(current_rom, '_idx_to_trid', {})
+                            for _idx in idxs:
+                                _trid = _i2trid.get(_idx)
+                                if _trid:
+                                    out.append(f'  decipher("{_primary_np}:{_idx}")  — {_trid}')
+                                else:
+                                    out.append(f'  decipher("{_primary_np}:{_idx}")')
 
                 if pwt_hits:
-                    tb_path = Unova_sequel.ROLE_PATH('pwt_trainers_b') or 'a/2/5/4'
+                    tb_path = getattr(current_rom, 'PWT_TRAINERS_B_PATH', None) or 'a/2/5/4'
                     out.append("----")
                     out.append(f"Indices within {tb_path} (PWT):")
                     out.append("")
                     for h in pwt_hits:
                         idx = h.get('index', 0)
-                        tourns = Unova_sequel.pwt_entry_tournaments.get(idx, [])
+                        tourns = current_rom.pwt_entry_tournaments.get(idx, [])
                         if tourns:
                             for tn in tourns:
                                 out.append(f"{idx} ({tn})")
@@ -2973,7 +3243,7 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                 if tourn_hits:
                     tc_map = current_rom.text_tables.get('tournament_classes', {})
                     cls_list = current_rom.text_tables.get('trainer_classes', [])
-                    tb_path = Unova_sequel.ROLE_PATH('pwt_trainers_b') or 'a/2/5/4'
+                    tb_path = getattr(current_rom, 'PWT_TRAINERS_B_PATH', None) or 'a/2/5/4'
                     for th in tourn_hits:
                         tidx = th.get('index', 0)
                         class_ids = tc_map.get(tidx, [])
@@ -2985,7 +3255,7 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                         for cid in class_ids:
                             pname = cls_list[cid] if cid < len(cls_list) else f'class#{cid}'
                             # Find PWT entry for this participant
-                            entries = Unova_sequel.pwt_name_to_entries.get(pname.lower(), [])
+                            entries = current_rom.pwt_name_to_entries.get(pname.lower(), [])
                             if entries:
                                 out.append(f"{pname} ({tb_path}:{entries[0]})")
                             else:
@@ -3004,10 +3274,23 @@ async def dowse(narc_path: str = None, hex: str = None, name: str = None, table:
                     for h in hits:
                         tbl, idx = h.get('table', ''), h.get('index', 0)
                         paths = h.get('paths', [])
-                        if paths:
-                            out.append(f"{rn} ({tbl} #{idx})  \u2192  {', '.join(paths)}")
-                        else:
-                            out.append(f"{rn} ({tbl} #{idx})")
+                        _show_base = not (enc_only or trainers_only or learnsets_only or personal_only or evolutions_only) or (trainers_only and tbl == 'trainer') or (personal_only and tbl == 'personal')
+                        if _show_base:
+                            if paths:
+                                out.append(f"{rn} ({tbl} #{idx})  \u2192  {', '.join(paths)}")
+                            else:
+                                out.append(f"{rn} ({tbl} #{idx})")
+                        if h.get('learned_by') is not None and learnsets_only:
+                            out.append(f"  learned by ({len(h['learned_by'])}): {', '.join(h['learned_by']) or 'nothing'}")
+                            if h.get('learnset_paths'):
+                                out.append(f"  learnset files: {', '.join(h['learnset_paths'])}")
+                        if h.get('found_at') is not None and enc_only:
+                            out.extend(_found_at_lines(rn, h))
+                        if 'evolves' in h and evolutions_only:
+                            out += [''] + _dowse_frame(f'Methods to Evolve {rn}') + (h['evolves'].split('\n') if h['evolves'] else [f"{rn} doesn't evolve."])
+
+            if enc_only and not any(h.get('found_at') for h in results):
+                out += ['', "Encounter lookup isn't written for this game yet."]
 
             return "\n".join(out)
         
@@ -3193,13 +3476,11 @@ async def stats(**_) -> dict:
 
     # Decoded roles vs what _auto_decode handles
     handled_roles = {
-        'trpoke', 'trdata', 'personal', 'learnsets', 'evolutions', 'move_data',
+        'trpoke', 'trainer', 'personal', 'learnsets', 'evolutions', 'move_data',
         'encounters', 'items', 'contest', 'pokeathlon_performance',
         'battle_tower_pokemon', 'battle_tower_trainers',
         'subway_pokemon', 'subway_trainers',
-        'pwt_rental', 'pwt_rental_b', 'pwt_champions', 'pwt_champions_b',
-        'pwt_trainers', 'pwt_trainers_b', 'pwt_rosters', 'pwt_rosters_b',
-        'pwt_defs', 'pwt_mix', 'pwt_trainer_map',
+        'pwt',
     }
     decoded_roles = {r: c for r, c in role_counts.items() if r in handled_roles}
     unknown_roles = {r: c for r, c in role_counts.items() if r not in handled_roles}
@@ -3479,7 +3760,7 @@ async def probe(path: str, offset: int = 0, reads: str = "u16", count: int = 1,
         'learnsets': [('moves', 'move', 600)],
         'move_data': [('type_names', 'type', 20)],
         'items': [('items', 'item', 800)],
-        'trdata': [('trainer_classes', 'class', 300), ('trainer_names', 'trainer', 900)],
+        'trainer': [('trainer_classes', 'class', 300), ('trainer_names', 'trainer', 900)],
         'trpoke': [('species', 'species', 700), ('moves', 'move', 600), ('items', 'item', 800)],
         'encounters': [('species', 'species', 700)],
         'evolutions': [('species', 'species', 700), ('items', 'item', 800), ('moves', 'move', 600)],
@@ -3551,7 +3832,7 @@ def _difficulty_label(path_str):
         gc = current_rom.header.get('game_code', '')
         if gc in ('IRB', 'IRA'):
             return ''
-        trdata_path = getattr(current_rom, 'TRDATA_PATH', '') if current_rom else ''
+        trdata_path = getattr(current_rom, 'TRAINER_PATH', '') if current_rom else ''
         trpoke_path = getattr(current_rom, 'TRPOKE_PATH', '') if current_rom else ''
         path_narc = path_str.rsplit(':', 1)[0] if ':' in path_str else path_str
         if path_narc not in (trdata_path, trpoke_path):
@@ -3584,19 +3865,22 @@ def _difficulty_label(path_str):
         pass
     return ''
 
+def _dowse_frame(title, gc=None):
+    """Dowse header: decipher's frame with the top and bottom bars stripped — title + game, one bar."""
+    return [f"{title} in {_get_game_title(gc)}", chr(9552) * 39]
+
+
 def _frame(decoded_str, path_str, gc=None):
     """Wrap decoded text in bar frame with game title and path."""
     bar = chr(9552) * 39
     lines = decoded_str.split('\n', 1)
     title = lines[0]
     body = lines[1] if len(lines) > 1 else ''
-    diff = _difficulty_label(path_str)
-    diff_tag = f' [{diff}]' if diff else ''
     gt = _get_game_title(gc)
     if path_str:
-        header = f"{bar}\n{title}{diff_tag}\n{gt} | {path_str}\n{bar}"
+        header = f"{bar}\n{title}\n{gt} | {path_str}\n{bar}"
     else:
-        header = f"{bar}\n{title}{diff_tag}\n{bar}"
+        header = f"{bar}\n{title}\n{bar}"
     if body:
         return f"{header}\n\n{body}\n{bar}"
     return f"{header}\n{bar}"
@@ -3670,7 +3954,8 @@ async def list_tools():
     return [
         Tool(name="spotlight", description="Open a ROM file for exploration. Second call on the same game restores from ICR cache instantly (no rescan). Returns NARC paths for key roles (trdata, trpoke, personal, learnsets).", inputSchema={
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "Absolute path to .nds, .gba, .gbc, or .gb file"}},
+            "properties": {"path": {"type": "string", "description": "Absolute path to .nds, .gba, .gbc, or .gb file"},
+                           "update": {"type": "string", "description": "Optional (Switch): absolute path to an update .nsp to layer over the base game"}},
             "required": ["path"]
         }),
         Tool(name="return", description="Close the current ROM. If multiple ROMs are open, switches to the next one. Use save=True only when you have sketched changes you want to keep.", inputSchema={
@@ -3690,7 +3975,8 @@ async def list_tools():
                 "path": {"type": "string", "description": "File path. NARC files: 'a/0/9/1:156'. ARM: 'arm9.bin'. Cross-ROM: 'IRE:a/0/9/1:156'. Comma-separated for batch."},
                 "offset": {"type": "integer", "description": "Byte offset (default: 0)"},
                 "length": {"type": "integer", "description": "Bytes to read (default: all)"},
-                "decompress": {"type": "boolean", "description": "Auto-decompress LZ10/LZ11 (default: true)"}
+                "decompress": {"type": "boolean", "description": "Auto-decompress LZ10/LZ11 (default: true)"},
+                "lang": {"type": "string", "description": "Switch text language (sticky). Codes: ja, ja-kanji, en, fr, it, de, es, ko, zh-Hans, zh-Hant. Only for 3DS/Switch ROMs with multilanguage support."}
             },
             "required": ["path"]
         }),
@@ -3741,7 +4027,7 @@ async def list_tools():
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Entity or category to search. Searches all text tables; falls back to NARC role names if no match."},
-                "table": {"type": "string", "description": "Restrict to one table: species, moves, items, abilities, trainer_names, trainer_classes"},
+                "table": {"type": "string", "description": "Restrict to one table: species, moves, items, abilities, trainer_names, trainer_classes; or 'encounters' (where a species is caught), 'trainers' (which trainers use it), 'learnsets' (who learns a move), 'personal' (which species hold an item or have an ability), 'evolutions' (how a species evolves)"},
                 "exact": {"type": "boolean", "description": "Exact match instead of substring (default: false)"},
                 "narc_path": {"type": "string", "description": "With name: find NARCs referencing this entity. With hex: search this NARC for a byte pattern."},
                 "hex": {"type": "string", "description": "Hex pattern to find in NARC files (requires narc_path)"},

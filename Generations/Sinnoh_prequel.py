@@ -3,20 +3,28 @@
 Inherits Galar_swsh. Ancient Sinnoh (Hisui region). Open-world action RPG.
 Agile/Strong style moves, alpha Pokemon, research tasks, crafting.
 """
-from Generations.Galar_swsh import Galar_swsh
+from Galar_swsh import Galar_swsh
 
 import struct
-from leswitch import fb_field, fb_root, fb_string, fb_table, fb_vector
+from leswitch import fb_field, fb_root, fb_str, fb_string, fb_sub, fb_table, fb_vector, _vt_off, unpack_gfpak, _fnv1a_64, unpack_gfpak, _fnv1a_64
 
 
 class Sinnoh_prequel(Galar_swsh):
     """Legends: Arceus."""
 
     GAME_CODES = ('PLA',)
-    TITLES = ('POKÉMON LEGENDS: ARCEUS',)
+    TITLE_IDS = (0x01001F5010DFA000,)
+    TITLES = ('Pokémon Legends: Arceus',)
     YEAR = 2022
 
     SPECIES_COUNT = 242
+
+    EVO_RECOIL_DAMAGE_MALE = 59
+    EVO_RECOIL_DAMAGE_FEMALE = 60
+    EVO_HISUI = 61
+    EVO_USE_ITEM_FULL_MOON = 90
+    EVO_USE_MOVE_AGILE = 91
+    EVO_USE_MOVE_STRONG = 92
 
     # -- Paths (from pkNX GameFileMapping.cs) --
     PERSONAL_PATH = 'bin/pml/personal/personal_data_total.perbin'
@@ -26,7 +34,7 @@ class Sinnoh_prequel(Galar_swsh):
     ITEM_PATH = 'bin/pml/item/item.dat'
     TEXT_PATH = 'bin/message/English/common'
     TEXT_SCRIPT_PATH = 'bin/message/English/script'
-    TRDATA_PATH = 'bin/trainer'
+    TRAINER_PATH = 'bin/trainer'
 
     # -- Encounters --
     STATIC_ENCOUNTER_PATH = 'bin/pokemon/data/poke_event_encount.bin'
@@ -44,6 +52,8 @@ class Sinnoh_prequel(Galar_swsh):
     BATTLE_DROPS_PATH = 'bin/pokemon/data/poke_drop_item_battle.bin'
     SHINY_ROLLS_PATH = 'bin/misc/app_config/pokemon_rare.bin'
     SHOP_PATH = 'bin/appli/shop/bin/ha_shop_data.bin'
+    GINKGO_ITEM_PATH = 'bin/event/event_progress/ginkgo/ginkgo_item.bin'
+    GINKGO_TABLE_PATH = 'bin/event/event_progress/ginkgo/ginkgo_item_table.bin'
     CRAFT_PATH = 'bin/pokemon/data/poke_make_item.bin'
     THROW_PARAM_PATH = 'bin/pokemon/data/throw_param.bin'
     THROWABLE_PARAM_PATH = 'bin/pokemon/data/throwable_param.bin'
@@ -58,10 +68,40 @@ class Sinnoh_prequel(Galar_swsh):
     TRAINER_CLASS_PATH = None
     EGG_MOVES_PATH = None
     WILD_AREA_PATH = None
+    RESIDENT_GFPAK_PATH = 'bin/archive/field/resident_release.gfpak'
+    AREA_SETTINGS_KEY = 'bin/field/resident/AreaSettings.bin'
+    PLA_AREA_NAMES = {
+        'ha_area00': 'Prelude Beach',
+        'ha_area01': 'Obsidian Fieldlands',
+        'ha_area02': 'Crimson Mirelands',
+        'ha_area03': 'Cobalt Coastlands',
+        'ha_area04': 'Coronet Highlands',
+        'ha_area05': 'Alabaster Icelands',
+        'ha_area06': 'Ancient Retreat',
+        'ha_area11': 'Temple of Sinnoh',
+    }
+
+    RESIDENT_GFPAK_PATH = 'bin/archive/field/resident_release.gfpak'
+    AREA_SETTINGS_KEY = 'bin/field/resident/AreaSettings.bin'
+    PLA_AREA_NAMES = {
+        'ha_area00': 'Prelude Beach',
+        'ha_area01': 'Obsidian Fieldlands',
+        'ha_area02': 'Crimson Mirelands',
+        'ha_area03': 'Cobalt Coastlands',
+        'ha_area04': 'Coronet Highlands',
+        'ha_area05': 'Alabaster Icelands',
+        'ha_area06': 'Ancient Retreat',
+        'ha_area11': 'Temple of Sinnoh',
+    }
     BATTLE_TOWER_POKE_PATH = None
     BATTLE_TOWER_TRAINER_PATH = None
     DYNAMAX_PATH = None
     NEST_DATA_PATH = None
+    RENTAL_PATH = None
+    SYMBOL_BEHAVE_PATH = None
+    MEGA_EVO_PATH = None
+    WILD_PATH_E = None
+    WILD_PATH_P = None
 
 
     def decode_personal(self, data, file_idx, text_tables, tm_table=None):
@@ -77,6 +117,17 @@ class Sinnoh_prequel(Galar_swsh):
 
         root = fb_root(data)
         vt, to = fb_table(data, root)
+
+        # Container unwrap: root has 1 field (vector of entries) — extract entry[file_idx]
+        vec_foff = _vt_off(vt, 0)
+        if vec_foff:
+            count, doff = fb_vector(data, to, vec_foff)
+            if count > 1:
+                if file_idx >= count:
+                    return f"Entry {file_idx} out of range ({count} entries)"
+                elem_off = doff + file_idx * 4
+                ptr = struct.unpack_from('<I', data, elem_off)[0]
+                vt, to = fb_table(data, elem_off + ptr)
 
         dex_national = fb_field(data, vt, to, 0, '<H') or 0
         form = fb_field(data, vt, to, 1, '<H') or 0
@@ -131,6 +182,14 @@ class Sinnoh_prequel(Galar_swsh):
 
         # Resolve names
         species_name = species_list[dex_national] if dex_national < len(species_list) else f"#{dex_national}"
+        # Apply form name (Hisuian Arcanine, Giratina (Origin Forme), etc.)
+        fl = self.FORM_NAMES.get((dex_national, form))
+        if fl and fl in self.REGIONAL_PREFIXES:
+            species_name = f"{fl} {species_name}"
+        elif fl:
+            species_name = f"{species_name} ({fl})"
+        elif form:
+            species_name = f"{species_name} (Form {form})"
         t1 = type_list[type1] if type1 < len(type_list) else f"type#{type1}"
         t2 = type_list[type2] if type2 < len(type_list) else f"type#{type2}"
         types_str = t1 if type1 == type2 else f"{t1} / {t2}"
@@ -155,12 +214,8 @@ class Sinnoh_prequel(Galar_swsh):
             out.append(f"Held items: {' / '.join(items)}")
         if dex_hisui:
             out.append(f"Hisui Dex: #{dex_hisui}")
-        if is_regional:
-            out.append("Regional Form")
         if not present:
             out.append("NOT IN GAME")
-        if form:
-            out.append(f"Form: {form}")
 
         return "\n".join(out)
 
@@ -239,6 +294,52 @@ class Sinnoh_prequel(Galar_swsh):
 
         return "\n".join(out)
 
+    # ── iter_encounters ───
+
+    def iter_encounters(self):
+        raw = self.switch_rom.read_file(self.RESIDENT_GFPAK_PATH)
+        pack = unpack_gfpak(raw)
+        settings = pack.get(_fnv1a_64(self.AREA_SETTINGS_KEY))
+        if not settings: return
+        root = fb_root(settings)
+        vt, to = fb_table(settings, root)
+        vo = _vt_off(vt, 0)
+        if not vo: return
+        count, doff = fb_vector(settings, to, vo)
+        seen = set()
+        for i in range(count):
+            rel = struct.unpack_from('<I', settings, doff + i * 4)[0]
+            sv, st = fb_table(settings, doff + i * 4 + rel)
+            name = fb_str(settings, sv, st, 0) or ''
+            enc_path = fb_str(settings, sv, st, 18) or ''
+            if not enc_path or enc_path in seen: continue
+            seen.add(enc_path)
+            base = name.split('_s')[0] if '_s' in name else name
+            if base not in self.PLA_AREA_NAMES: continue
+            label = self.PLA_AREA_NAMES[base]
+            enc_data = pack.get(_fnv1a_64(enc_path))
+            if not enc_data: continue
+            eroot = fb_root(enc_data)
+            evt, eto = fb_table(enc_data, eroot)
+            evo = _vt_off(evt, 0)
+            if not evo: continue
+            tc, td = fb_vector(enc_data, eto, evo)
+            for t in range(tc):
+                trel = struct.unpack_from('<I', enc_data, td + t * 4)[0]
+                tv, tt = fb_table(enc_data, td + t * 4 + trel)
+                minlv = fb_field(enc_data, tv, tt, 1, '<i') or 0
+                maxlv = fb_field(enc_data, tv, tt, 2, '<i') or 0
+                svo = _vt_off(tv, 3)
+                if not svo: continue
+                sc, sd = fb_vector(enc_data, tt, svo)
+                for s in range(sc):
+                    srel = struct.unpack_from('<I', enc_data, sd + s * 4)[0]
+                    ssv, sst = fb_table(enc_data, sd + s * 4 + srel)
+                    species = fb_field(enc_data, ssv, sst, 0, '<i') or 0
+                    form = fb_field(enc_data, ssv, sst, 3, '<i') or 0
+                    if species:
+                        yield (label, species, form, minlv, maxlv)
+
     # ── decode_encounters ─────────────────────────────────────────
 
     def decode_encounters(self, data, file_idx, text_tables, path='', **kwargs):
@@ -283,14 +384,20 @@ class Sinnoh_prequel(Galar_swsh):
             is_alpha = bool(fb_field(data, ovt, oto, 0, '<B') or 0)
 
         sp_name = species_list[species] if species < len(species_list) else f"#{species}"
-        form_str = f"-{form}" if form else ""
+        fl = self.FORM_NAMES.get((species, form))
+        if fl and fl in self.REGIONAL_PREFIXES:
+            sp_name = f"{fl} {sp_name}"
+        elif fl:
+            sp_name += f" ({fl})"
+        elif form:
+            sp_name += f" (Form {form})"
         lv_str = f"Lv{min_lv}" if min_lv == max_lv else f"Lv{min_lv}-{max_lv}"
         sex_str = self.SEX_SYMBOLS[gender] if gender < len(self.SEX_SYMBOLS) else ''
         shiny_str = '' if shiny_lock == 0 else ' *ShinyLocked*' if shiny_lock == 1 else ' *AlwaysShiny*'
 
-        out = [f"{sp_name}{form_str}{sex_str} {lv_str}{shiny_str} (weight {base_prob})"]
+        out = [f"{sp_name}{sex_str} {lv_str}{shiny_str} (weight {base_prob})"]
         if is_alpha:
-            out.append("ALPHA")
+            out.append("α")
         if num_perfect_ivs:
             out.append(f"IVs: {num_perfect_ivs} perfect")
         if nature:
@@ -302,31 +409,55 @@ class Sinnoh_prequel(Galar_swsh):
 
     # ── decode_trainer ────────────────────────────────────────────
 
-    def decode_trainer(self, data, file_idx, text_tables):
+    def decode_trainer(self, data, file_idx, text_tables, path='', **kwargs):
         """Decode PLA trainer (TrainerData FlatBuffer).
-        Team is a vector of TrainerPoke with WazaSet sub-tables for moves."""
+        Matches Gen 4-7 formatting: class+name header, Team: block, footer."""
         if len(data) < 12:
             return None
 
         species_list = text_tables.get('species', [])
         moves_list = text_tables.get('moves', [])
+        natures_list = text_tables.get('natures', [])
+
+        GENDER_SYM = {0: ' ♂', 1: ' ♀'}
+
         root = fb_root(data)
         vt, to = fb_table(data, root)
 
-        # Music string (field 3)
-        music_off = fb_field(data, vt, to, 3, '<H')
-        music = fb_string(data, to, music_off) if music_off else ""
+        # Music (field 3)
+        music_tag = fb_str(data, vt, to, 3) or ''
+        music_name = self.BATTLE_MUSIC.get(music_tag, music_tag)
 
-        money = fb_field(data, vt, to, 10, '<i') or 0
+        # Trainer identity from filename prefix → TRAINER_MAP
+        trainer_id = ''
+        trainer_name = f'Trainer #{file_idx}'
+        class_name = ''
+        if path:
+            fname = path.rsplit('/', 1)[-1]
+            bare = fname.replace('trdata_', '').replace('.bin', '')
+            trainer_id = bare
+            for prefix, name, cls in self.TRAINER_MAP:
+                if bare.startswith(prefix):
+                    trainer_name = name
+                    class_name = cls
+                    break
 
-        out = [f"Trainer #{file_idx} | Music: {music} | Money: {money}"]
+        # Header
+        if class_name:
+            lines = [f"{class_name} {trainer_name} (#{trainer_id})"]
+        else:
+            lines = [f"{trainer_name} (#{trainer_id})"]
+        lines.append('')
 
-        # Team vector (field 22)
-        team_off = fb_field(data, vt, to, 22, '<H')
-        if team_off:
-            count, doff = fb_vector(data, to, team_off)
+        # Team (field 22)
+        has_alpha = False
+        has_mastered = False
+
+        team_voff = _vt_off(vt, 22)
+        if team_voff:
+            count, doff = fb_vector(data, to, team_voff)
+            lines.append('Team:')
             for i in range(count):
-                # Each element is an offset to a TrainerPoke sub-table
                 elem_off = doff + i * 4
                 ptr = struct.unpack_from('<I', data, elem_off)[0]
                 p_abs = elem_off + ptr
@@ -340,29 +471,59 @@ class Sinnoh_prequel(Galar_swsh):
                 shiny = fb_field(data, pvt, pto, 15, '<B') or 0
                 is_alpha = fb_field(data, pvt, pto, 16, '<B') or 0
 
-                sp_name = species_list[species] if species < len(species_list) else f"#{species}"
-                form_str = f"-{form}" if form else ""
+                sp_name = species_list[species] if species < len(species_list) else f'#{species}'
+                fl = self.FORM_NAMES.get((species, form))
+                if fl and fl in self.REGIONAL_PREFIXES:
+                    sp_name = f"{fl} {sp_name}"
+                elif fl:
+                    sp_name += f" ({fl})"
+                elif form:
+                    sp_name += f" (Form {form})"
+                gender_str = GENDER_SYM.get(gender, '')
 
-                # Moves (fields 2-5, WazaSet sub-tables: Move int + Mastered bool)
+                tags = ''
+                if is_alpha:
+                    tags += '  α'
+                    has_alpha = True
+                if shiny:
+                    tags += '  ✨'
+
+                lines.append(f"{sp_name}{gender_str} (Lv. {level}){tags}")
+
+                # Nature
+                if natures_list and 0 <= nature < len(natures_list):
+                    lines.append(f"{natures_list[nature]} Nature")
+
+                # Moves (fields 2-5, WazaSet sub-tables)
                 move_names = []
                 for mi in range(4):
-                    m_off = fb_field(data, pvt, pto, 2 + mi, '<H')
-                    if m_off:
-                        m_abs = pto + m_off
-                        m_sub = m_abs + struct.unpack_from('<I', data, m_abs)[0]
-                        mvt, mto = fb_table(data, m_sub)
+                    mvt, mto = fb_sub(data, pvt, pto, 2 + mi)
+                    if mvt is not None:
                         mid = fb_field(data, mvt, mto, 0, '<i') or 0
                         mastered = fb_field(data, mvt, mto, 1, '<B') or 0
                         if mid:
-                            mname = moves_list[mid] if mid < len(moves_list) else f"move#{mid}"
-                            move_names.append(f"{mname}{'*' if mastered else ''}")
+                            mname = moves_list[mid] if mid < len(moves_list) else f'move#{mid}'
+                            if mastered:
+                                mname += '*'
+                                has_mastered = True
+                            move_names.append(mname)
+                if move_names:
+                    lines.append(' / '.join(move_names))
 
-                moves_str = f" [{' / '.join(move_names)}]" if move_names else ""
-                alpha_str = " ALPHA" if is_alpha else ""
-                shiny_str = " *Shiny*" if shiny else ""
-                out.append(f"  {i+1}. {sp_name}{form_str} Lv{level}{alpha_str}{shiny_str}{moves_str}")
+                lines.append('')
 
-        return "\n".join(out)
+        # Footer
+        if music_name:
+            lines.append(f'Battle Theme: {music_name}')
+        legend = []
+        if has_alpha:
+            legend.append('α = This Pokémon is an Alpha Pokémon')
+        if has_mastered:
+            legend.append('* next to a move = This move has been mastered')
+        if legend:
+            lines.append(' | '.join(legend))
+
+        return '\n'.join(lines)
 
     # ── decode_item ───────────────────────────────────────────────
 
@@ -545,6 +706,130 @@ class Sinnoh_prequel(Galar_swsh):
 
         move_name = moves_list[move_id] if move_id < len(moves_list) else f"move#{move_id}"
         return f"Shop #{index}: {move_name} (#{move_id}) — {price} pts"
+
+
+    def build_personal_index(self, data):
+        """Scan FlatBuffer personal container, build species_id -> container_index map.
+        Forms are interleaved, so container index != national dex number.
+        Only maps base forms (form 0) — form variants get index+N."""
+        root = fb_root(data)
+        vt, to = fb_table(data, root)
+        vec_foff = _vt_off(vt, 0)
+        if not vec_foff:
+            return {}
+        count, doff = fb_vector(data, to, vec_foff)
+        sp_map = {}  # species_id -> container_index (base form only)
+        form_map = {}  # container_index -> (species_id, form)
+        for i in range(count):
+            elem_off = doff + i * 4
+            ptr = struct.unpack_from('<I', data, elem_off)[0]
+            evT, eTO = fb_table(data, elem_off + ptr)
+            dex = fb_field(data, evT, eTO, 0, '<H') or 0
+            form = fb_field(data, evT, eTO, 1, '<H') or 0
+            # Check base stats - all zeros = placeholder, not a real entry
+            hp = fb_field(data, evT, eTO, 8, '<B') or 0
+            atk = fb_field(data, evT, eTO, 9, '<B') or 0
+            real = (hp + atk) > 0
+            form_map[i] = (dex, form)
+            if real and dex not in sp_map:
+                sp_map[dex] = i
+        self.personal_species_map = sp_map
+        self.personal_form_map = form_map
+        return sp_map
+
+
+    # Regional prefixes get prepended ("Hisuian Arcanine")
+    # Everything else goes in parens ("Giratina (Origin Forme)")
+    REGIONAL_PREFIXES = {'Hisuian', 'Alolan', 'Galarian'}
+
+    FORM_NAMES = {
+        # Hisuian forms (form 1 = Hisuian for all)
+        (58, 1): "Hisuian", (59, 1): "Hisuian",       # Growlithe, Arcanine
+        (100, 1): "Hisuian", (101, 1): "Hisuian",     # Voltorb, Electrode
+        (157, 1): "Hisuian",                           # Typhlosion
+        (211, 1): "Hisuian",                           # Qwilfish
+        (215, 1): "Hisuian",                           # Sneasel
+        (503, 1): "Hisuian",                           # Samurott
+        (549, 1): "Hisuian",                           # Lilligant
+        (570, 1): "Hisuian", (571, 1): "Hisuian",     # Zorua, Zoroark
+        (628, 1): "Hisuian",                           # Braviary
+        (705, 1): "Hisuian", (706, 1): "Hisuian",     # Sliggoo, Goodra
+        (713, 1): "Hisuian",                           # Avalugg
+        (724, 1): "Hisuian",                           # Decidueye
+        # Legendary formes
+        (483, 0): "Altered Forme", (483, 1): "Origin Forme",   # Dialga
+        (484, 0): "Altered Forme", (484, 1): "Origin Forme",   # Palkia
+        (487, 0): "Altered Forme", (487, 1): "Origin Forme",   # Giratina
+        (492, 0): "Land Forme", (492, 1): "Sky Forme", # Shaymin
+        # Forces of Nature
+        (641, 0): "Incarnate Forme", (641, 1): "Therian Forme",   # Tornadus
+        (642, 0): "Incarnate Forme", (642, 1): "Therian Forme",   # Thundurus
+        (645, 0): "Incarnate Forme", (645, 1): "Therian Forme",   # Landorus
+        (905, 0): "Incarnate Forme", (905, 1): "Therian Forme",   # Enamorus
+        # Basculin
+        (550, 0): "Red-Striped", (550, 1): "Blue-Striped", (550, 2): "White-Striped",
+        # Rotom
+        (479, 1): "Heat", (479, 2): "Wash", (479, 3): "Frost", (479, 4): "Fan", (479, 5): "Mow",
+        # Misc
+        (421, 1): "Sunshine",                          # Cherrim
+        # Shellos / Gastrodon
+        (422, 0): "West Sea", (422, 1): "East Sea",    # Shellos
+        (423, 0): "West Sea", (423, 1): "East Sea",    # Gastrodon
+        # Basculegion
+        (902, 0): "Male", (902, 1): "Female",          # Basculegion
+        # Unown (A-Z, !, ?)
+        (201, 0): "A", (201, 1): "B", (201, 2): "C", (201, 3): "D",
+        (201, 4): "E", (201, 5): "F", (201, 6): "G", (201, 7): "H",
+        (201, 8): "I", (201, 9): "J", (201, 10): "K", (201, 11): "L",
+        (201, 12): "M", (201, 13): "N", (201, 14): "O", (201, 15): "P",
+        (201, 16): "Q", (201, 17): "R", (201, 18): "S", (201, 19): "T",
+        (201, 20): "U", (201, 21): "V", (201, 22): "W", (201, 23): "X",
+        (201, 24): "Y", (201, 25): "Z", (201, 26): "!", (201, 27): "?",
+        # Arceus type formes
+        (493, 1): "Fighting", (493, 2): "Flying", (493, 3): "Poison",
+        (493, 4): "Ground", (493, 5): "Rock", (493, 6): "Bug",
+        (493, 7): "Ghost", (493, 8): "Steel", (493, 9): "Fire",
+        (493, 10): "Water", (493, 11): "Grass", (493, 12): "Electric",
+        (493, 13): "Psychic", (493, 14): "Ice", (493, 15): "Dragon",
+        (493, 16): "Dark", (493, 17): "Fairy",
+        # Misc
+        (412, 0): "Plant", (412, 1): "Sandy", (412, 2): "Trash",  # Burmy
+        (413, 0): "Plant", (413, 1): "Sandy", (413, 2): "Trash",  # Wormadam
+    }
+
+    # Trainer filename prefix -> (name, class)
+    # Confirmed by cross-referencing team data with game sources
+    TRAINER_MAP = (
+        # (prefix,      name,       class)
+        ('giratina',    'Volo',     'Pokemon Wielder'),
+        ('trainer01',   'Charm',    'The Bandit'),
+        ('trainer02',   'Clover',   'The Bandit'),
+        ('trainer03',   'Coin',     'The Bandit'),
+        ('trainer04',   'Ingo',     'Warden'),
+        ('trainer05',   'Melli',    'Warden'),
+        ('trainer06',   'Sabi',     'Warden'),
+        ('trainer07',   'Gaeric',   'Warden'),
+        ('trainer08',   'Beni',     "The Galaxy Team's"),
+        ('trainer09',   'Kamado',   "The Galaxy Team's"),
+        ('trainer10',   'Volo',     'Pokemon Wielder'),
+        ('trainer11',   'Adaman',   'Clan Leader'),
+        ('trainer12',   'Irida',    'Clan Leader'),
+        ('trainer13',   'Rei',      "The Survey Corps'"),
+        ('trainer14',   'Akari',    "The Survey Corps'"),
+        ('trainer15',   'Zisu',     'The Security Corps'),
+        ('trainer16',   'Wenton',   'The Security Corps'),
+        ('trainer17',   'Bren',     'The Security Corps'),
+        ('trainer18',   'Mai',      'Warden'),
+        ('trainer19',   'Lian',     'Warden'),
+    )
+
+    # Music tag -> official soundtrack name
+    BATTLE_MUSIC = {
+        'PLAY_BGM_VS_TRAINER_01':   'Battle! (Pokemon Wielder)',
+        'PLAY_BGM_VS_TRAINER_02':   'Battle! (Clan Warden)',
+        'PLAY_BGM_VS_TRAINER10_01': 'Battle! (Pokemon Wielder Volo)',
+        'PLAY_BGM_VS_BOSS_03':      'Battle! (Volo & Giratina)',
+    }
 
     FLIPNOTE_PAIRS = {
         'Pokemon Legends Arceus': ['PLA'],

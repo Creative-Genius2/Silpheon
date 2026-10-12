@@ -2,7 +2,7 @@
 
 Inherits Johto_crystal. Gen III added: abilities, natures, GBA platform.
 """
-from Generations.Johto_crystal import Johto_crystal
+from Johto_crystal import Johto_crystal
 import struct
 
 
@@ -20,6 +20,8 @@ class Hoenn_rse(Johto_crystal):
     EOS = 0xFF
     CHARMAP_JP = None
     SPECIES_COUNT = 386
+
+    BATTLE_TYPES = ('Single', 'Double')
 
 
     # Gen III (GBA) character map — English FireRed/Ruby/Emerald
@@ -225,7 +227,6 @@ class Hoenn_rse(Johto_crystal):
             next_key = max((k for k in text_tables if isinstance(k, int)), default=-1) + 1
             text_tables[next_key] = items
 
-    @staticmethod
     def decode_trainer(self, header: bytes, party_data: bytes, party_flags: int) -> dict:
         """Decode Gen III trainer header (40 bytes) and party data.
 
@@ -335,7 +336,7 @@ class Hoenn_rse(Johto_crystal):
                 if 0x08000000 <= ptr2 <= 0x0A000000:
                     off2 = ptr2 - 0x08000000
                     if off2 + 2 <= len(rom_data) and rom_data[off2:off2+2] == tackle_lv1:
-                        offsets['learnset_ptr_table'] = i - 4  # entry 0 = dummy
+                        offsets['learnset_ptr_table'] = i  # i = entry 0 (NONE shares Bulbasaur's list), i+4 = Bulbasaur
                         break
 
         # ── Evolution table: find via Bulbasaur (sp1) level 16 → Ivysaur (sp2) ──
@@ -407,12 +408,146 @@ class Hoenn_rse(Johto_crystal):
         'Pokémon Emerald': ['BPEE'],
     }
 
-    TABLE_FINGERPRINTS = {
-        'moves':      [(0, "Pound"), (4, "Mega Punch")],
-        'items':      [(0, "Master Ball"), (3, "Poké Ball"), (12, "Potion")],
-        'type_names': [(0, "NORMAL"), (1, "FIGHT"), (2, "FLYING")],  # Gen III uses abbreviated display names
-    }
+    TABLE_FINGERPRINTS = (
+        ('moves',      ((0, "Pound"), (4, "Mega Punch"))),
+        ('items',      ((0, "Master Ball"), (3, "Poké Ball"), (12, "Potion"))),
+        ('type_names', ((0, "NORMAL"), (1, "FIGHT"), (2, "FLYING"))),  # Gen III abbreviated
+    )
 
+
+    LEARNSET_COUNT = 411  # internal species slots (Treecko=277), not dex order
+
+    def learnset_moves(self, data):
+        """Raw learnset for reverse lookup: [(level, move_id)]. Packed u16 (level<<9)|move."""
+        out = []
+        for i in range(0, len(data) - 1, 2):
+            raw = struct.unpack_from('<H', data, i)[0]
+            if raw == 0xFFFF or raw == 0: break
+            out.append(((raw >> 9) & 0x7F, raw & 0x1FF))
+        return out
+
+    def map_name(self, group, num):
+        """Same chain the game walks for the location popup: map-groups ptr list -> group's header ptr list -> header byte 0x14
+        (region-map section) -> name ptr list. Both lists found by shape; the name list's length must equal the section range
+        the headers use. Emerald/Ruby: 8B entries (x, y, w, h, name ptr), FRLG: bare ptrs. Cached."""
+        import struct
+        rom = bytes(self.rom or b''); L = len(rom); B = 0x08000000
+        u = lambda a: struct.unpack_from('<I', rom, a)[0]
+        V = lambda q: B <= q < B + L - 32
+        def head(q):
+            if not V(q): return None
+            a = q - B; lay, ev, sc, cn = struct.unpack_from('<4I', rom, a)
+            if not (V(lay) and V(ev) and V(sc) and (cn == 0 or V(cn))): return None
+            w, h = struct.unpack_from('<II', rom, lay - B); return a if 0 < w <= 0x200 and 0 < h <= 0x200 else None
+        if getattr(self, '_map_names', None) is None:
+            self._map_names = {}
+            self._map_headers = {}
+            grp = lambda q: V(q) and head(u(q - B)) is not None and head(u(q - B + 4)) is not None
+            g = next((o for o in range(0, L - 12, 4) if grp(u(o)) and grp(u(o + 4)) and grp(u(o + 8))), None)
+            if g is None: return None
+            hdrs = {}; i = 0
+            while V(u(g + 4 * i)) and head(u(u(g + 4 * i) - B)) is not None:
+                A = u(g + 4 * i) - B; j = 0
+                while (h := head(u(A + 4 * j))) is not None: hdrs[(i, j)] = rom[h + 0x14]; self._map_headers[(i, j)] = h; j += 1
+                i += 1
+            lo, span = min(hdrs.values()), max(hdrs.values()) - min(hdrs.values()) + 1
+            def s_ok(q):
+                if not V(q): return False
+                a = q - B; k = 0
+                while rom[a + k] != self.EOS:
+                    if k > 30: return False
+                    k += 1
+                return True
+            names = None
+            for st, po in ((8, 4), (4, 0)):
+                o = 0
+                while names is None and o < L - st * span:
+                    if not V(u(o + po)): o += 4; continue
+                    n = 0
+                    while n <= span and s_ok(u(o + po + st * n)): n += 1
+                    if n == span: names = [u(o + po + st * k) - B for k in range(span)]
+                    o += st * n if n else 4
+                if names: break
+            if not names: return None
+            def dec(a):
+                s = ''
+                while rom[a] != self.EOS: s += '' if rom[a] == 0xFC else ' ' if rom[a] in (0x00, 0xFE) else self.CHARMAP_EN.get(rom[a], '?'); a += 2 if rom[a] == 0xFC else 1
+                return ' '.join(s.split())
+            self._map_names = {k: dec(names[v - lo]) for k, v in hdrs.items() if 0 <= v - lo < span}
+        return self._map_names.get((group, num))
+
+    def iter_encounters(self):
+        """(id, species, form, lo, hi). Wild header list found by shape: 20B rows (group, map, pad, 4 ptrs: land/water/rock/fish),
+        each ptr -> (rate u8, pad, mons ptr) -> n x (min, max, species u16). FF FF terminates. Located once, cached."""
+        import struct
+        rom = bytes(self.rom or b''); L = len(rom)
+        def info(p, n):
+            if not p: return True
+            a = p - 0x08000000
+            if not (0 <= a and a + 8 <= L and 0 < rom[a] <= 100): return False
+            m = struct.unpack_from('<I', rom, a + 4)[0] - 0x08000000
+            return 0 <= m <= L - 4 * n and all(rom[m + 4 * i] <= rom[m + 4 * i + 1] <= 100 and 0 < struct.unpack_from('<H', rom, m + 4 * i + 2)[0] < 440 for i in range(n))
+        def hdr(o):
+            ps = struct.unpack_from('<4I', rom, o + 4)
+            return any(ps) and all(p == 0 or 0x08000000 <= p < 0x08000000 + L for p in ps) and all(info(p, n) for p, n in zip(ps, (12, 5, 5, 10)))
+        if getattr(self, '_wild_table', None) is None:
+            self._wild_table = 0
+            for o in range(0, L - 60, 4):
+                if hdr(o) and hdr(o + 20) and hdr(o + 40):
+                    while o >= 20 and hdr(o - 20): o -= 20
+                    self._wild_table = o; break
+        o, out = self._wild_table, []
+        if not o: return None
+        while o + 20 <= L and not (rom[o] == 0xFF and rom[o + 1] == 0xFF):
+            for p, n, area in zip(struct.unpack_from('<4I', rom, o + 4), (12, 5, 5, 10), ('grass', 'water', 'rock smash', 'fishing')):
+                if not p: continue
+                m = struct.unpack_from('<I', rom, p - 0x08000000 + 4)[0] - 0x08000000
+                seen = {}
+                for i in range(n):
+                    lo, hi, sp = struct.unpack_from('<BBH', rom, m + 4 * i); seen.setdefault(sp, []).extend((lo, hi))
+                out += [(f"{self.map_name(rom[o], rom[o + 1]) or 'Map'} [{rom[o]}/{rom[o + 1]}] {area}", sp, 0, min(l), max(l), {'location': self.map_name(rom[o], rom[o + 1]) or f'Map [{rom[o]}/{rom[o + 1]}]', 'method': area}) for sp, l in seen.items()]
+            o += 20
+        # Statics: scan the script region (all map script starts, found via map headers) for
+        # setwildbattle B6 (sp u16, lv, item u16), givemon 79 (sp u16, lv, item u16), and event mons
+        # (setvar 8004 sp / 8005 lv / 8006 item, then a "create" special). An event special counts if a
+        # special that follows a setwildbattle also follows it, or it shares its create special with one that does.
+        import re, bisect
+        self.map_name(0, 0); P = lambda a: (lambda q: q - 0x08000000 if 0x08000000 <= q < 0x08000000 + L else None)(struct.unpack_from('<I', rom, a)[0])
+        st = []
+        for k, h in self._map_headers.items():
+            e = P(h + 4)
+            for n, t, sz, so in ((rom[e], P(e + 4), 24, 16), (rom[e + 2], P(e + 12), 16, 12), (rom[e + 3], P(e + 16), 12, 8)) if e is not None else ():
+                st += [(q, k) for i in range(n if t is not None else 0) if (q := P(t + i * sz + so)) is not None]
+            m = P(h + 8)
+            while m is not None and rom[m]:
+                if (q := P(m + 1)) is not None: st.append((q, k))
+                m += 5
+        if not st: return out
+        st.sort(); ks = [a for a, _ in st]; base = ks[0]; reg = rom[base:ks[-1] + 0x800]
+        def where(x):
+            i = bisect.bisect_right(ks, x + base) - 1
+            return st[i][1] if i >= 0 and x + base - ks[i] < 0x800 else None
+        after = lambda x: {reg[x + j + 1:x + j + 3] for j in range(32) if x + j < len(reg) and reg[x + j] == 0x25}
+        hits = [(mm.start(), 'static' if reg[mm.start()] == 0xB6 else 'gift', *struct.unpack_from('<HB', reg, mm.start() + 1)) for mm in re.finditer(rb'[\xb6\x79]....[\x00\x01]', reg, re.S)]
+        hits = [x for x in hits if 0 < x[2] < 440 and 0 < x[3] <= 100 and where(x[0])]
+        S = set().union(*(after(x[0]) for x in hits if x[1] == 'static'))
+        ev = [(mm.start() + 15, 'event', struct.unpack_from('<H', reg, mm.start() + 3)[0], reg[mm.start() + 8]) for mm in re.finditer(rb'\x16\x04\x80..\x16\x05\x80..\x16\x06\x80..\x25', reg, re.S)]
+        ev = [x for x in ev if 0 < x[2] < 440 and 0 < x[3] <= 100 and where(x[0])]
+        C = {reg[x[0] + 1:x[0] + 3] for x in ev if after(x[0] + 3) & S}
+        for x, kind, sp, lv in hits + [x for x in ev if reg[x[0] + 1:x[0] + 3] in C]:
+            g, n = where(x); out.append((f"{self.map_name(g, n) or 'Map'} [{g}/{n}] {kind}", sp, 0, lv, lv, {'location': self.map_name(g, n) or f'Map [{g}/{n}]', 'method': kind}))
+        return out
+
+    def iter_learnsets(self):
+        """GBA: one pointer per species slot. Table located once by the Gen III finder, cached."""
+        rom = bytes(self.rom or b'')
+        if getattr(self, '_learnset_table', None) is None:
+            self._learnset_table = (self._discover_gen3_tables(self._current_rom_ref()) or {}).get('learnset_ptr_table', 0)
+        t = self._learnset_table
+        if not t: return
+        for s in range(1, self.LEARNSET_COUNT + 1):
+            p = struct.unpack_from('<I', rom, t + 4 * s)[0] - 0x08000000
+            if 0 <= p < len(rom): yield s, self.learnset_moves(rom[p:p + 256])
 
     # Clean attribute names
     DISCOVER_TABLES = _discover_gen3_tables
@@ -439,7 +574,6 @@ class Hoenn_rse(Johto_crystal):
     SCAN_SPECIES = _scan_gen3_species
     SCAN_TRAINER_NAMES = _scan_gen3_trainer_names
 
-    @staticmethod
     def decode_personal(self, data, file_idx, text_tables, tm_table=None):
         """Decode Gen III/IV personal data (28B or 44B). Returns formatted string."""
         if len(data) < 28 or data == b'\x00' * len(data):

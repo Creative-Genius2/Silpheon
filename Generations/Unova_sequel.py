@@ -3,14 +3,14 @@
 Inherits Unova_prequel. Different trdata/trpoke/encounter paths,
 adds PWT (Pokemon World Tournament), Challenge Mode trainer delta.
 """
-from Generations.Unova_prequel import Unova_prequel
+from Unova_prequel import Unova_prequel
 
 
 class Unova_sequel(Unova_prequel):
     """Black 2/White 2. Inherits Black/White, adds PWT."""
 
     GAME_CODES = ('IRE', 'IRD')
-    TITLES = ('POKÉMON BLACK 2', 'POKÉMON WHITE 2')
+    TITLES = ('Pokémon Black 2', 'Pokémon White 2')
     YEAR = 2012
 
     TRDATA_PATH = 'a/0/9/1'
@@ -26,6 +26,10 @@ class Unova_sequel(Unova_prequel):
     PWT_CHAMPIONS_PATH = 'a/2/5/6'
     PWT_CHAMPIONS_B_PATH = 'a/2/5/7'
     PWT_DOWNLOAD_PATH = 'a/2/5/8'
+    PWT_TRAINERS_2_PATH = 'a/2/4/8'
+    PWT_ROSTERS_2_PATH = 'a/2/4/9'
+    PWT_MIX_PATH = 'a/2/6/1'
+    PWT_DEFS_PATH = 'a/2/6/9'
 
     SUBWAY_POKEMON_PATH = 'a/2/4/0'
     SUBWAY_TRAINERS_PATH = 'a/2/4/1'
@@ -73,224 +77,303 @@ class Unova_sequel(Unova_prequel):
         781: 4,
     }
 
-    @staticmethod
-    def get_bw2_challenge_delta(file_idx: int, game_code: str = '') -> int:
-        """Get runtime challenge level delta for a BW2 trainer file.
-        Returns 0 for Normal mode files, non-BW2 games, or unkeyed files.
-        """
-        if game_code not in ('IRE', 'IRD'):
-            return 0
-        return Unova_sequel.CHALLENGE_FILE_DELTA.get(file_idx, 0)
+    def get_challenge_delta(self, file_idx):
+        """BW2 Challenge Mode level delta. Overrides SDK default (0)."""
+        return self.CHALLENGE_FILE_DELTA.get(file_idx, 0)
 
-    @staticmethod
-    def _role_path(role_name, narc_roles: dict):
-        """Look up a NARC path by its role name, using the narc_roles reverse map."""
-        for path, role in narc_roles.items():
+    def _role_path(self, role_name):
+        """Look up a NARC path by its role name, using self.narc_roles."""
+        for path, role in self.narc_roles.items():
             if role == role_name:
                 return path
         return None
 
 
-    @staticmethod
-    def _resolve_pwt_trainer_name(trainer_idx, text_tables: dict, trainer_role="pwt_trainers"):
-        """Resolve a PWT trainer index to a name via the trainer mapping table (a/2/4/0).
-        Entry stride: 20 bytes (10 u16s). Class IDs live at different positions per group:
-          - Group 1 (Kanto/Johto): u16[8] has the class ID
-          - Groups 2-5 (Hoenn/Sinnoh/Unova/Champions): u16[5], u16[6], u16[7] have class IDs
-        Check all candidate positions, return the first that resolves to a real leader name."""
-        _JUNK = {'Pokmon Trainer', 'Boss Trainer', 'no data', 'Pokmon Trainer',
-                 'Team Plasma', 'GAME FREAK', 'Leader', ''}
-        classes = text_tables.get('trainer_classes', [])
+    def bootstrap_pwt(self):
+        """Build PWT lookup maps from ROM data. Called once at spotlight for B2W2."""
+        self.pwt_name_to_entries = {}
+        self.pwt_entry_tournaments = {}
+        tt = self.text_tables
+        classes = tt.get('trainer_classes', [])
+        _JUNK = {'Pokmon Trainer', 'Boss Trainer', 'no data', 'Team Plasma',
+                 'GAME FREAK', 'Leader', ''}
         try:
-            map_path = Unova_sequel._role_path('pwt_trainer_map')
-            if not map_path:
-                return None
-            map_narc = _get_narc(map_path)
-            if not map_narc.files:
-                return None
-            data = bytes(map_narc.files[0])
-            stride = 20
-            entry_off = trainer_idx * stride
-            if entry_off + stride > len(data):
-                return None
-            # Only u16[8] has trainer identity; u16[5-7] are generic tournament classes
-            for pos in (8,):
-                cid = struct.unpack_from('<H', data, entry_off + pos * 2)[0]
-                if cid == 0 or cid >= len(classes):
-                    continue
-                raw = classes[cid]
-                if isinstance(raw, str):
-                    clean = re.sub(r'[^\x20-\x7E]', '', raw).strip()
-                    if clean and clean not in _JUNK:
-                        return clean
-        except:
-            pass
-        return None
-
-
-    # Globals built at ROM open for B2W2 PWT dowse support
-    pwt_name_to_entries = {}    # name (lowercase) -> [trainers_b file indices]
-    pwt_entry_tournaments = {}  # trainers_b index -> [tournament name strings]
-
-    @staticmethod
-    def _build_pwt_maps(text_tables: dict):
-        """Build PWT reverse indexes from ROM data. No hardcoding.
-        1) pwt_entry_tournaments: read pwt_defs, extract trainers_b indices per tournament.
-        2) pwt_name_to_entries: for each trainers_b entry, auto-resolve name via trainer_map class IDs.
-        3) Unresolved entries: cross-reference PWT pool types vs in-game Leader team types.
-        Called once at ROM open for B2W2."""
-        global pwt_name_to_entries, pwt_entry_tournaments
-        pwt_name_to_entries = {}
-        pwt_entry_tournaments = {}
-        try:
-            # Step 1: pwt_defs -> trainers_b indices per tournament
-            defs_path = Unova_sequel._role_path('pwt_defs')
-            if not defs_path:
-                return
-            defs_narc = _get_narc(defs_path)
-            for fi, raw in enumerate(defs_narc.files):
+            # 1) Tournament defs → which trainers_b indices appear in which tournament
+            defs = self.get_narc(self.PWT_DOWNLOAD_PATH)
+            tourn_names = tt.get('tournament_names', [])
+            for fi, raw in enumerate(defs.files):
                 data = bytes(raw)
-                if len(data) < 0x1A8:
-                    continue
+                if len(data) < 0x1A8: continue
                 tid = struct.unpack_from('<H', data, 0)[0]
-                tname = Unova_sequel._resolve_pwt_text(tid) or f"Tournament #{tid}"
-                if isinstance(tname, str):
-                    tname = re.sub(r'[^\x20-\x7E]', '', tname).strip()
+                tname = ''
+                if tid < len(tourn_names):
+                    r = tourn_names[tid]
+                    if isinstance(r, str):
+                        tname = re.sub(r'[^\x20-\x7E]', '', r).strip()
+                if not tname or tname == '???': tname = f"Tournament #{tid}"
                 indices = set()
                 for rs, re_ in [(0xA0, 0x130), (0x160, 0x1A8)]:
                     for off in range(rs, re_, 2):
                         val = struct.unpack_from('<H', data, off)[0]
-                        if 1 <= val <= 68:
-                            indices.add(val)
+                        if 1 <= val <= 68: indices.add(val)
                 for idx in indices:
-                    pwt_entry_tournaments.setdefault(idx, []).append(tname)
+                    self.pwt_entry_tournaments.setdefault(idx, []).append(tname)
 
-            # Step 2: auto-resolve names via trainer_map class IDs (works for external leaders)
-            tb_path = Unova_sequel._role_path('pwt_trainers_b')
-            if not tb_path:
-                return
-            tb_count = len(_get_narc(tb_path).files)
+            # 2) Trainer map → resolve names by class ID at u16[8]
+            try:
+                map_data = bytes(self.get_narc(self._role_path('pwt_trainer_map')).files[0])
+            except Exception:
+                map_data = b''
+            tb = self.get_narc(self.PWT_TRAINERS_B_PATH)
             unresolved = []
-            for idx in range(1, tb_count):
-                name = Unova_sequel._resolve_pwt_trainer_name(idx)
+            for idx in range(1, len(tb.files)):
+                name = None
+                off = idx * 20
+                if off + 20 <= len(map_data):
+                    cid = struct.unpack_from('<H', map_data, off + 16)[0]  # u16[8]
+                    if 0 < cid < len(classes):
+                        raw = classes[cid]
+                        if isinstance(raw, str):
+                            clean = re.sub(r'[^\x20-\x7E]', '', raw).strip()
+                            if clean and clean not in _JUNK: name = clean
                 if name:
-                    pwt_name_to_entries.setdefault(name.lower(), []).append(idx)
+                    self.pwt_name_to_entries.setdefault(name.lower(), []).append(idx)
                 else:
                     unresolved.append(idx)
 
-            # Step 3: resolve BW2 gym leaders by name + type cross-reference
-            # The text table has "Leader" at MULTIPLE class IDs (112-119, one per gym leader).
-            # Collect ALL of them so every leader is found.
-            if not unresolved:
-                return
-            tc = text_tables.get('trainer_classes', [])
-            leader_cids = set()
-            for ci, cn in enumerate(tc):
-                if isinstance(cn, str) and cn.strip() == 'Leader':
-                    leader_cids.add(ci)
-            if not leader_cids:
-                return
-            trdata_path = Unova_sequel._role_path('trdata')
-            trpoke_path = Unova_sequel._role_path('trpoke')
-            personal_path = Unova_sequel._role_path('personal')
-            if not (trdata_path and trpoke_path and personal_path):
-                return
-            td_narc = _get_narc(trdata_path)
-            tp_narc = _get_narc(trpoke_path)
-            ps_narc = _get_narc(personal_path)
-            tnames = text_tables.get('trainer_names', [])
+            # 3) Resolve remaining by type cross-reference against gym leaders
+            if not unresolved: return
+            leader_cids = {ci for ci, cn in enumerate(classes)
+                           if isinstance(cn, str) and cn.strip() == 'Leader'}
+            if not leader_cids: return
+            td_narc = self.get_narc(self.TRAINER_PATH)
+            tp_narc = self.get_narc(self.TRPOKE_PATH)
+            ps_narc = self.get_narc(self.PERSONAL_PATH)
+            tnames = tt.get('trainer_names', [])
             PSIZES = {0: 8, 1: 16, 2: 10, 3: 18}
 
-            def _get_type(sid):
-                """Return (type1, type2) for a species from personal data."""
-                if sid >= len(ps_narc.files):
-                    return None
-                pers = bytes(ps_narc.files[sid])
-                if len(pers) < 8:
-                    return None
-                return pers[6], pers[7]
-
-            def _dominant_type(species_ids):
-                """Find the most common type across a list of species."""
+            def _dom_type(sids):
                 counts = {}
-                for sid in species_ids:
-                    tp = _get_type(sid)
-                    if tp is None:
-                        continue
-                    t1, t2 = tp
+                for sid in sids:
+                    if sid >= len(ps_narc.files): continue
+                    pers = bytes(ps_narc.files[sid])
+                    if len(pers) < 8: continue
+                    t1, t2 = pers[6], pers[7]
                     counts[t1] = counts.get(t1, 0) + 1
-                    if t2 != t1:
-                        counts[t2] = counts.get(t2, 0) + 1
+                    if t2 != t1: counts[t2] = counts.get(t2, 0) + 1
                 return max(counts, key=counts.get) if counts else None
 
-            # Scan Normal-mode trdata for Leaders (any of the leader class IDs)
-            leader_profiles = []  # [(name, type_specialty), ...]
-            seen_names = set()
-            normal_limit = min(764, len(td_narc.files))
-            for ti in range(normal_limit):
+            leaders = []
+            seen = set()
+            for ti in range(min(764, len(td_narc.files))):
                 td = bytes(td_narc.files[ti])
-                if len(td) < 16 or td[1] not in leader_cids:
-                    continue
+                if len(td) < 16 or td[1] not in leader_cids: continue
                 nm = tnames[ti] if ti < len(tnames) else None
-                if not isinstance(nm, str):
-                    continue
+                if not isinstance(nm, str): continue
                 nm = re.sub(r'[^\x20-\x7E]', '', nm).strip()
-                if not nm or nm in seen_names:
-                    continue
-                seen_names.add(nm)
-                # Get this leader's pokemon from trpoke -> personal -> types
+                if not nm or nm in seen: continue
+                seen.add(nm)
                 psize = PSIZES.get(td[0] & 3, 8)
                 tp = bytes(tp_narc.files[ti]) if ti < len(tp_narc.files) else b''
                 sids = []
                 for pi in range(td[3]):
-                    off = pi * psize
-                    if off + 6 > len(tp):
-                        break
-                    sids.append(struct.unpack_from('<H', tp, off + 4)[0])
-                specialty = _dominant_type(sids)
-                if specialty is not None:
-                    leader_profiles.append((nm, specialty))
+                    o = pi * psize
+                    if o + 6 > len(tp): break
+                    sids.append(struct.unpack_from('<H', tp, o + 4)[0])
+                t = _dom_type(sids)
+                if t is not None: leaders.append((nm, t))
 
-            if not leader_profiles:
-                return
-
-            # Match unresolved PWT entries against leader profiles by type
-            roster_path = Unova_sequel._role_path('pwt_rosters_b')
-            pool_path = Unova_sequel._role_path('pwt_champions')
-            if not (roster_path and pool_path):
-                return
-            ro_narc = _get_narc(roster_path)
-            po_narc = _get_narc(pool_path)
-            matched_leaders = set()  # prevent double-matching
+            if not leaders: return
+            ro_narc = self.get_narc(self.PWT_ROSTERS_B_PATH)
+            po_narc = self.get_narc(self.PWT_CHAMPIONS_PATH)
+            matched = set()
             for idx in unresolved:
-                if idx >= len(ro_narc.files):
-                    continue
+                if idx >= len(ro_narc.files): continue
                 rd = bytes(ro_narc.files[idx])
-                if len(rd) < 6:
-                    continue
+                if len(rd) < 6: continue
                 r_count = struct.unpack_from('<H', rd, 2)[0]
-                pool_sids = []
+                sids = []
                 for ri in range(r_count):
-                    poff = 4 + ri * 2
-                    if poff + 2 > len(rd):
-                        break
-                    pidx = struct.unpack_from('<H', rd, poff)[0]
+                    po = 4 + ri * 2
+                    if po + 2 > len(rd): break
+                    pidx = struct.unpack_from('<H', rd, po)[0]
                     if pidx < len(po_narc.files):
-                        pdata = bytes(po_narc.files[pidx])
-                        if len(pdata) >= 2:
-                            pool_sids.append(struct.unpack_from('<H', pdata, 0)[0])
-                pwt_specialty = _dominant_type(pool_sids)
-                if pwt_specialty is None:
-                    continue
-                for lname, ltype in leader_profiles:
-                    if lname in matched_leaders:
-                        continue
-                    if ltype == pwt_specialty:
-                        pwt_name_to_entries.setdefault(lname.lower(), []).append(idx)
-                        matched_leaders.add(lname)
+                        pd = bytes(po_narc.files[pidx])
+                        if len(pd) >= 2: sids.append(struct.unpack_from('<H', pd, 0)[0])
+                t = _dom_type(sids)
+                if t is None: continue
+                for lname, ltype in leaders:
+                    if lname not in matched and ltype == t:
+                        self.pwt_name_to_entries.setdefault(lname.lower(), []).append(idx)
+                        matched.add(lname)
                         break
         except Exception:
             pass
+
+    def _decode_pwt_pool_entry(self, data):
+        """Decode one 16B PWT pool entry → one-line string."""
+        if len(data) < 16 or data == b'\x00' * 16: return None
+        tt = self.text_tables
+        sp = tt.get('species', []); mv = tt.get('moves', [])
+        nat = tt.get('natures', []); it = tt.get('items', [])
+        sid = struct.unpack_from('<H', data, 0)[0]
+        moves = [struct.unpack_from('<H', data, 2+i*2)[0] for i in range(4)]
+        ev, nature, item = data[10], data[11], struct.unpack_from('<H', data, 12)[0]
+        sname = sp[sid] if sid < len(sp) else f"#{sid}"
+        nraw = nat[nature] if nature < len(nat) else ""
+        nname = re.sub(r'[^\x20-\x7E]', '', nraw).replace(' nature.', '').strip() if nraw else f"nature#{nature}"
+        mnames = [mv[m] if m < len(mv) else f"move#{m}" for m in moves if m]
+        evs = self.decode_ev_spread(ev)
+        itag = f" @ {it[item]}" if item and item < len(it) else ""
+        parts = [f"{sname} ({nname}){itag}"]
+        if mnames: parts.append(" / ".join(mnames))
+        if evs and evs != ['None']: parts.append(f"EVs: {', '.join(evs)}")
+        return "\n".join(parts)
+
+    def decode_pwt(self, data, file_idx, text_tables, path='', **kw):
+        """Decode any PWT file. Path tells us the format."""
+        # Which PWT NARC are we in?
+        pool_paths = {self.PWT_POKEMON_PATH, self.PWT_POKEMON_B_PATH,
+                      self.PWT_CHAMPIONS_PATH, self.PWT_CHAMPIONS_B_PATH}
+        roster_paths = {self.PWT_ROSTERS_PATH, self.PWT_ROSTERS_B_PATH}
+        trainer_paths = {self.PWT_TRAINERS_PATH, self.PWT_TRAINERS_B_PATH}
+        narc = path.rsplit(':', 1)[0] if ':' in path else path
+
+        # Pool entry (16B)
+        if narc in pool_paths:
+            return self._decode_pwt_pool_entry(data)
+
+        # Roster: format(u16) + count(u16) + pool_indices
+        if narc in roster_paths:
+            if len(data) < 4: return None
+            count = struct.unpack_from('<H', data, 2)[0]
+            if count == 0 and struct.unpack_from('<H', data, 0)[0] == 0: return None
+            indices = [struct.unpack_from('<H', data, 4+i*2)[0]
+                       for i in range(count) if 4+i*2+2 <= len(data)]
+            out = [f"Roster #{file_idx} | {count} Pokémon"]
+            try:
+                pool = self.get_narc(self.PWT_CHAMPIONS_PATH)
+                for pi in indices:
+                    line = self._decode_pwt_pool_entry(bytes(pool.files[pi])) if pi < len(pool.files) else None
+                    out.append(f"  [{pi}] {line.replace(chr(10), '  |  ')}" if line else f"  [{pi}] (empty)")
+            except: pass
+            return "\n".join(out)
+
+        # Trainer config (6B): format + count + start
+        if narc in trainer_paths:
+            if len(data) < 6: return None
+            fmt, count, start = [struct.unpack_from('<H', data, i*2)[0] for i in range(3)]
+            if fmt == 0 and count == 0 and start == 0: return None
+            name = None
+            for n, idxs in self.pwt_name_to_entries.items():
+                if file_idx in idxs: name = n.title(); break
+            out = [f"{'PKMN Trainer ' + name if name else f'Trainer #{file_idx}'} | Picks {count} | Start: {start}"]
+            try:
+                ro = self.get_narc(self.PWT_ROSTERS_B_PATH)
+                pool = self.get_narc(self.PWT_CHAMPIONS_PATH)
+                if file_idx < len(ro.files):
+                    rd = bytes(ro.files[file_idx])
+                    if len(rd) >= 4:
+                        r_count = struct.unpack_from('<H', rd, 2)[0]
+                        for i in range(r_count):
+                            o = 4 + i * 2
+                            if o + 2 > len(rd): break
+                            pi = struct.unpack_from('<H', rd, o)[0]
+                            if pi < len(pool.files):
+                                line = self._decode_pwt_pool_entry(bytes(pool.files[pi]))
+                                if line: out.append(f"  {line.replace(chr(10), '  |  ')}")
+            except: pass
+            return "\n".join(out)
+
+        # Tournament def (everything else under a/2/5/)
+        if len(data) < 0x60: return None
+        tid = struct.unpack_from('<H', data, 0)[0]
+        trainer_count = struct.unpack_from('<H', data, 4)[0]
+        bf = struct.unpack_from('<H', data, 6)[0]
+        pool_type = struct.unpack_from('<H', data, 8)[0]
+        bt = {1:"Single", 2:"Double", 3:"Triple", 4:"Rotation"}.get(bf, f"Type {bf}")
+        tourn_names = tt.get('tournament_names', [])
+        tname = ''
+        if tid < len(tourn_names):
+            r = tourn_names[tid]
+            if isinstance(r, str): tname = re.sub(r'[^ -~]', '', r).strip()
+        if not tname or tname == '???': tname = f"Tournament #{tid}"
+        out = [f"Tournament #{tid} — {tname}", f"Trainers: {trainer_count} | Battle: {bt} | Pool: {pool_type}"]
+        tis = set()
+        for rs, re_ in [(0xA0, 0x130), (0x160, 0x1A8)]:
+            if len(data) < re_: continue
+            for off in range(rs, re_, 2):
+                val = struct.unpack_from('<H', data, off)[0]
+                if 1 <= val <= 68: tis.add(val)
+        if tis:
+            out.append(f"Trainer pool: {sorted(tis)}")
+            try:
+                pool = self.get_narc(self.PWT_CHAMPIONS_PATH)
+                ro = self.get_narc(self.PWT_ROSTERS_B_PATH)
+                for ti in sorted(tis):
+                    if ti >= len(ro.files): continue
+                    rd = bytes(ro.files[ti])
+                    if len(rd) >= 6:
+                        rc = struct.unpack_from('<H', rd, 2)[0]
+                        first = struct.unpack_from('<H', rd, 4)[0]
+                        if first < len(pool.files):
+                            line = self._decode_pwt_pool_entry(bytes(pool.files[first]))
+                            if line: out.append(f"  pwttr[{ti}]: {line.split(chr(10))[0]}  (+{rc-1} more)")
+            except: pass
+        return "\n".join(out)
+
+    def bootstrap_locations(self):
+        """Discover gym/league trainer locations from ROM data. Called at spotlight."""
+        import ndspy.narc
+        tr_narc = self.get_narc(self.TRAINER_PATH)
+        if not tr_narc:
+            return
+
+        # Gym leaders: known index pairs (normal, challenge) -> city
+        self._gym_locations = (
+            ((156, 764), "Aspertia Gym"),
+            ((157, 765), "Virbank Gym"),
+            ((158, 766), "Castelia Gym"),
+            ((159, 767), "Nimbasa Gym"),
+            ((160, 768), "Driftveil Gym"),
+            ((161, 769), "Mistralton Gym"),
+            ((162, 770), "Opelucid Gym"),
+            ((163, 771), "Humilau Gym"),
+        )
+
+        self._challenge_start = 764
+
+        # E4/Champion: read byte 1 of known challenge files, scan all trdata
+        e4_champ_classes = set()
+        for idx in (772, 773, 774, 775, 776):
+            e4_champ_classes.add(bytes(tr_narc.files[idx])[1])
+
+        self._league_indices = set()
+        self._initial_indices = set()
+        self._rematch_indices = set()
+
+        # Scan all trdata for E4/Champion class bytes
+        for i, f in enumerate(tr_narc.files):
+            d = bytes(f)
+            if len(d) >= 2 and d[1] in e4_champ_classes:
+                self._league_indices.add(i)
+
+        # Initial vs Rematch: split within each mode, not across modes
+        # 764 boundary separates Normal from Challenge
+        by_class = {}
+        for idx in self._league_indices:
+            cls = bytes(tr_narc.files[idx])[1]
+            by_class.setdefault(cls, []).append(idx)
+        for cls, indices in by_class.items():
+            normal = sorted(i for i in indices if i < 764)
+            challenge = sorted(i for i in indices if i >= 764)
+            # Within each mode: lower index = First Battle, higher = Rematch
+            for group in (normal, challenge):
+                if len(group) >= 2:
+                    self._initial_indices.add(group[0])
+                    self._rematch_indices.add(group[1])
+                elif len(group) == 1:
+                    self._initial_indices.add(group[0])
 
 
     # PWT pool roles — these decode as individual pokemon entries (16B each)
@@ -313,291 +396,6 @@ class Unova_sequel(Unova_prequel):
         'subway_trainers':       'subway_pokemon',
         'battle_tower_trainers': 'battle_tower_pokemon',
     }
-
-
-    @staticmethod
-    def decode_pwt(self, data: bytes, text_tables: dict, is_champions: bool = False, pool_name: str = "", pool_index: int = 0):
-        """Decode PWT/facility pokemon pool entry (16B). Returns positional text."""
-        if len(data) < 16 or data == b'\x00' * 16:
-            return None
-
-        species_list = text_tables.get('species', [])
-        moves_list = text_tables.get('moves', [])
-        natures_list = text_tables.get('natures', [])
-        items_list = text_tables.get('items', [])
-
-        species_id = struct.unpack_from('<H', data, 0)[0]
-        moves = [struct.unpack_from('<H', data, 2 + i * 2)[0] for i in range(4)]
-        ev_spread = data[10]
-        nature = data[11]
-        field12 = struct.unpack_from('<H', data, 12)[0]
-
-        species_name = species_list[species_id] if species_id < len(species_list) else f"#{species_id}"
-        nature_raw = natures_list[nature] if nature < len(natures_list) else ""
-        nature_name = re.sub(r'[^\x20-\x7E]', '', nature_raw).replace(' nature.', '').strip() if nature_raw else f"nature#{nature}"
-
-        move_names = [moves_list[m] if m < len(moves_list) else f"move#{m}" for m in moves if m != 0]
-        ev_names = decode_ev_spread(ev_spread)
-
-        item_tag = ""
-        if field12 > 0:
-            item_name = items_list[field12] if field12 < len(items_list) else f"item#{field12}"
-            item_tag = f"  [{item_name}]"
-
-        poke_line = f"{species_name} ({nature_name}){item_tag}"
-        out = [f"[{pool_name} #{pool_index}] {poke_line}" if pool_name else poke_line]
-        if move_names:
-            out.append(" / ".join(move_names))
-        if ev_names and ev_names != ['None']:
-            out.append(f"EVs: {', '.join(ev_names)}")
-
-        return "\n".join(out)
-
-
-    @staticmethod
-    def _resolve_pwt_pool_entry(pool_idx, pool_narc_path=None, pool_role='pwt_champions'):
-        """Resolve a PWT pool index to a single formatted pokemon line."""
-        try:
-            if not pool_narc_path:
-                pool_narc_path = Unova_sequel._role_path(pool_role)
-            if not pool_narc_path:
-                return None
-            pool_narc = _get_narc(pool_narc_path)
-            if pool_idx >= len(pool_narc.files):
-                return None
-            pdata = bytes(pool_narc.files[pool_idx])
-            result = Unova_sequel.decode_pwt(pdata)
-            if not result:
-                return None
-            return result.replace("\n", "  |  ")
-        except:
-            return None
-
-
-    @staticmethod
-    def decode_pwt_roster(self, data: bytes, slot_index: int = 0, roster_role: str = "pwt_rosters"):
-        """Decode PWT/facility roster with resolved pokemon. Returns positional text."""
-        if len(data) < 4:
-            return None
-        fmt = struct.unpack_from('<H', data, 0)[0]
-        count = struct.unpack_from('<H', data, 2)[0]
-        if count == 0 and fmt == 0:
-            return None
-        indices = []
-        for i in range(count):
-            off = 4 + i * 2
-            if off + 2 > len(data):
-                break
-            indices.append(struct.unpack_from('<H', data, off)[0])
-        label = roster_role.replace('pwt_', '').replace('_', ' ').title()
-        out = [f"{label} Roster #{slot_index} | {count} Pokémon"]
-        pool_role = Unova_sequel._PWT_ROSTER_POOLS.get(roster_role, 'pwt_rental')
-        pool_path = Unova_sequel._role_path(pool_role)
-        for pi in indices:
-            line = Unova_sequel._resolve_pwt_pool_entry(pi, pool_narc_path=pool_path)
-            if line:
-                out.append(f"  Pool[{pi}] {line}")
-            else:
-                out.append(f"  Pool[{pi}] (empty)")
-        return "\n".join(out)
-
-
-    @staticmethod
-    def decode_pwt_trainer_config(self, data: bytes, slot_index: int = 0, trainer_role: str = "pwt_trainers"):
-        """Decode PWT trainer config (6B) with resolved roster + pokemon. Returns positional text."""
-        if len(data) < 6:
-            return None
-        fmt = struct.unpack_from('<H', data, 0)[0]
-        count = struct.unpack_from('<H', data, 2)[0]
-        start_idx = struct.unpack_from('<H', data, 4)[0]
-        if fmt == 0 and count == 0 and start_idx == 0:
-            return None
-        trainer_name = Unova_sequel._resolve_pwt_trainer_name(slot_index, trainer_role)
-        if trainer_name:
-            out = [f"PKMN Trainer {trainer_name} | Picks {count} from pool | Pool start: {start_idx}"]
-        else:
-            label = trainer_role.replace('pwt_', '').replace('_', ' ').title()
-            out = [f"{label} Trainer #{slot_index} | Format: {fmt} | Picks {count} from pool | Pool start: {start_idx}"]
-        # Follow the role chain: trainer role → roster role → pool role
-        chain = Unova_sequel._PWT_ROLE_CHAINS.get(trainer_role)
-        if chain:
-            roster_role, pool_role = chain
-            roster_path = Unova_sequel._role_path(roster_role)
-            pool_path = Unova_sequel._role_path(pool_role)
-            if roster_path and pool_path:
-                try:
-                    roster_narc = _get_narc(roster_path)
-                    if slot_index < len(roster_narc.files):
-                        rd = bytes(roster_narc.files[slot_index])
-                        if len(rd) >= 4:
-                            r_count = struct.unpack_from('<H', rd, 2)[0]
-                            indices = []
-                            for i in range(r_count):
-                                off = 4 + i * 2
-                                if off + 2 <= len(rd):
-                                    indices.append(struct.unpack_from('<H', rd, off)[0])
-                            for pi in indices:
-                                line = Unova_sequel._resolve_pwt_pool_entry(pi, pool_narc_path=pool_path)
-                                if line:
-                                    out.append(f"  {line}")
-                except:
-                    pass
-        return "\n".join(out)
-
-
-    @staticmethod
-    def _scan_pwt_tournaments(text_tables: dict):
-        """Scan every file in a/0/3/8, find RCSN tournament configs, parse participant
-        trainer_class IDs, and populate text_tables['tournament_classes'].
-
-        Structure: after RCSN magic, locate first [id ≥ 0x50][flag] pair, then read
-        (id, flag) pairs in groups separated by 0x00. IDs are trainer_class indices.
-        Works for B2W2 only (a/0/3/8 has 20 files = 20 tournaments).
-        """
-        if 'tournament_classes' in text_tables:
-            return
-
-        try:
-            narc = _get_narc('a/0/3/8')
-        except Exception:
-            return
-
-        RCSN = b'RCSN'
-        result = {}
-
-        for file_idx, raw in enumerate(narc.files):
-            try:
-                data, _ = decompress_data(bytes(raw))
-            except Exception:
-                continue
-            if not data:
-                continue
-
-            magic_off = data.find(RCSN)
-            if magic_off < 0:
-                continue
-
-            # Find data start: first [id≥0x50][any] [id≥0x50][any] after the header
-            data_start = -1
-            for i in range(magic_off + 16, min(magic_off + 64, len(data) - 3)):
-                if data[i] >= 0x50 and data[i + 2] >= 0x50 and data[i + 3] not in (0x00,):
-                    data_start = i
-                    break
-
-            if data_start < 0:
-                continue
-
-            # Parse (id, flag) pairs, 0x00 = group separator
-            class_ids = set()
-            i = data_start
-            while i + 1 < len(data):
-                b = data[i]
-                if b == 0x00:
-                    i += 1
-                    # Two consecutive 0x00 or out-of-range byte = end of section
-                    if i < len(data) and (data[i] == 0x00 or data[i] < 0x40):
-                        break
-                    continue
-                if b >= 0x50:
-                    class_ids.add(b)
-                    i += 2  # skip id + flag byte
-                else:
-                    break
-
-            if class_ids:
-                result[file_idx] = sorted(class_ids)
-
-        if result:
-            text_tables['tournament_classes'] = result
-
-
-    @staticmethod
-    def _resolve_pwt_text(tournament_id, text_tables: dict):
-        """Resolve a PWT tournament ID to its name via the tournament_names text table.
-        Tournament ID (u16 at offset 0x00 of the def) indexes directly into text file 405."""
-        names = text_tables.get('tournament_names', [])
-        if tournament_id < len(names):
-            raw = names[tournament_id]
-            if isinstance(raw, str):
-                clean = re.sub(r'[^\x20-\x7E]', '', raw).strip()
-                if clean and clean != '???':
-                    return clean
-        return None
-
-
-    @staticmethod
-    def decode_pwt_tournament_def(self, data: bytes, file_idx: int = 0):
-        """Decode PWT tournament definition (1688B) from pwt_defs. Returns positional text."""
-        if len(data) < 0x60:
-            return None
-        # Header
-        tid = struct.unpack_from('<H', data, 0)[0]
-        category = struct.unpack_from('<H', data, 2)[0]
-        trainer_count = struct.unpack_from('<H', data, 4)[0]
-        battle_format = struct.unpack_from('<H', data, 6)[0]
-        pool_type = struct.unpack_from('<H', data, 8)[0]
-        cfg5 = struct.unpack_from('<H', data, 0x0A)[0]
-        cfg6 = struct.unpack_from('<H', data, 0x0C)[0]
-        cfg7 = struct.unpack_from('<H', data, 0x0E)[0]
-        cfg8 = struct.unpack_from('<H', data, 0x10)[0]
-        flag1 = struct.unpack_from('<H', data, 0x12)[0]
-        flag2 = struct.unpack_from('<H', data, 0x14)[0]
-
-        BATTLE_TYPES = {1: "Single", 2: "Double", 3: "Triple", 4: "Rotation"}
-        bt = BATTLE_TYPES.get(battle_format, f"Type {battle_format}")
-
-        music_a = struct.unpack_from('<H', data, 0x18)[0]
-        music_b = struct.unpack_from('<H', data, 0x1A)[0]
-
-        # Tournament ID indexes directly into the tournament_names text table (file 405)
-        tournament_name = Unova_sequel._resolve_pwt_text(tid) or f"Tournament #{tid}"
-
-        out = [f"Tournament #{tid} — {tournament_name}"]
-        out.append(f"Trainers: {trainer_count} | Battle: {bt} | Pool type: {pool_type}")
-        out.append(f"Config: [{cfg5}, {cfg6}, {cfg7}, {cfg8}]")
-        if flag1 != 0xFFFF:
-            flags = [f for f in [flag1, flag2] if f != 0xFFFF]
-            out.append(f"Save flags: {flags}")
-        out.append(f"Music: {music_a} / {music_b}")
-
-        # Scan data regions at known offsets for pwttr indices
-        trainer_indices = set()
-        for region_start, region_end in [(0xA0, 0x130), (0x160, 0x1A8)]:
-            if len(data) < region_end:
-                continue
-            for off in range(region_start, region_end, 2):
-                val = struct.unpack_from('<H', data, off)[0]
-                if 1 <= val <= 68:
-                    trainer_indices.add(val)
-
-        if trainer_indices:
-            sorted_idx = sorted(trainer_indices)
-            out.append(f"Trainer pool indices: {sorted_idx}")
-            # Resolve each via role chain
-            roster_path = Unova_sequel._role_path('pwt_rosters_b')
-            pool_path = Unova_sequel._role_path('pwt_champions')
-            if roster_path and pool_path:
-                try:
-                    roster_narc = _get_narc(roster_path)
-                    for ti in sorted_idx:
-                        if ti >= len(roster_narc.files):
-                            continue
-                        rd = bytes(roster_narc.files[ti])
-                        if len(rd) >= 6:
-                            r_count = struct.unpack_from('<H', rd, 2)[0]
-                            first_pool = struct.unpack_from('<H', rd, 4)[0]
-                            line = Unova_sequel._resolve_pwt_pool_entry(first_pool, pool_narc_path=pool_path)
-                            if line:
-                                species_part = line.split('|')[0].strip()
-                                out.append(f"  pwttr[{ti}]: {species_part}  (+{r_count - 1} more)")
-                except:
-                    pass
-
-        return "\n".join(out)
-
-
-
-
 
     TRAINER_LOCATIONS = {
         "IRE": {
@@ -646,11 +444,3 @@ class Unova_sequel(Unova_prequel):
         },
         "IRD": "IRE",
     }
-
-
-    GET_CHALLENGE_DELTA = get_bw2_challenge_delta
-    BUILD_PWT_MAPS = _build_pwt_maps
-    SCAN_PWT_TOURNAMENTS = _scan_pwt_tournaments
-    ROLE_PATH = _role_path
-    PWT_POOL_ROLES = _PWT_POOL_ROLES
-

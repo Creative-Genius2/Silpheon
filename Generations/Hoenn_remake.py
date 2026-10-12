@@ -2,17 +2,20 @@
 
 Inherits Kalos_prequel. Same engine, different GARC paths.
 """
-from Generations.Kalos_prequel import Kalos_prequel
+from Kalos_prequel import Kalos_prequel
 
 
 class Hoenn_remake(Kalos_prequel):
     """Omega Ruby/Alpha Sapphire. Inherits X/Y engine, ORAS paths."""
 
     GAME_CODES = ('ECR', 'ECL')
-    TITLES = ('POKÉMON OMEGA RUBY', 'POKÉMON ALPHA SAPPHIRE')
+    TITLES = ('Pokémon Omega Ruby', 'Pokémon Alpha Sapphire')
     YEAR = 2014
 
-    TEXT_PATH = 'a/0/7/9'
+    # Text: 8 languages at a/0/7/1 through a/0/7/8
+    TEXT_LANG_BASE = 'a/0/7/'
+    TEXT_LANG_FIRST = 1
+    TEXT_PATH = 'a/0/7/3'
     PERSONAL_PATH = 'a/1/9/5'
     LEARNSET_PATH = 'a/1/9/1'
     EVOLUTION_PATH = 'a/1/9/2'
@@ -21,7 +24,9 @@ class Hoenn_remake(Kalos_prequel):
     ITEM_PATH = 'a/1/9/7'
     MOVE_DATA_PATH = 'a/1/8/9'
     ENCOUNTER_PATH = 'a/0/1/3'
-    TRDATA_PATH = 'a/0/3/6'
+    ENC_OFFSET, ENC_SIZE, ZONE_DATA_INDEX = 0x0E, 0xF4, -2
+    ENC_SECTIONS = Kalos_prequel.ORAS_SECTIONS
+    TRAINER_PATH = 'a/0/3/6'
     TRPOKE_PATH = 'a/0/3/8'
     TRCLASS_PATH = 'a/0/3/7'
     MAISON_POKEMON_NORMAL_PATH = 'a/1/8/2'
@@ -30,3 +35,4 @@ class Hoenn_remake(Kalos_prequel):
     MAISON_TRAINERS_SUPER_PATH = 'a/1/8/5'
 
     PERSONAL_SIZE = 0x50
+    BABY_SPECIES_PATH = 'a/1/9/6'

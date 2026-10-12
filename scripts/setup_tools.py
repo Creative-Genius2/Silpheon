@@ -133,8 +133,16 @@ def download_with_selenium(url: str, output_path: Path, timeout: int = 60):
         }
         options.add_experimental_option("prefs", prefs)
         
-        # Create undetected Chrome driver
-        driver = uc.Chrome(options=options, version_main=None)
+        # Detect actual Chrome version to avoid chromedriver mismatch
+        import winreg
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
+            ver = winreg.QueryValueEx(key, "version")[0]
+            chrome_major = int(ver.split(".")[0])
+            winreg.CloseKey(key)
+        except Exception:
+            chrome_major = None
+        driver = uc.Chrome(options=options, version_main=chrome_major)
         
         print(f"Navigating to {url}...")
         driver.get(url)
@@ -156,7 +164,8 @@ def download_with_selenium(url: str, output_path: Path, timeout: int = 60):
             # Check for .crdownload file (Chrome partial download)
             crdownload = output_path.with_suffix(output_path.suffix + '.crdownload')
             if crdownload.exists():
-                print("Download in progress...")
+                sz = crdownload.stat().st_size / (1024*1024)
+                print(f"Download in progress... {sz:.0f} MB so far")
             
             time.sleep(1)
         
