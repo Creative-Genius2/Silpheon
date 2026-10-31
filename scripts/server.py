@@ -1286,7 +1286,7 @@ async def spotlight(path: str, update: str = None) -> dict:
 
         # Discover data table offsets from the ROM itself (no hardcoding)
         if rom_type == 'gba':
-            gen3_offsets = spec.DISCOVER_TABLES(current_rom._current_rom_ref())
+            gen3_offsets = spec.DISCOVER_TABLES()
             if gen3_offsets:
                 text_table_result["gen3_tables"] = f"personal@0x{gen3_offsets.get('personal_base',0):X} move@0x{gen3_offsets.get('move_base',0):X}"
         elif rom_type in ('gb', 'gbc'):

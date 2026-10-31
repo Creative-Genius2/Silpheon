@@ -17,8 +17,6 @@ class Kanto_rbg(SDK):
     GEN = 1
     CONTAINER = 'gb'
 
-    ENC_ANCHOR_LEVELS = (2, 5)  # Route 1 grass level range; anchors the wild encounter table scan
-
     STAT_COUNT = 5
     STAT_ORDER = ('HP', 'Atk', 'Def', 'Spe', 'Special')
 
@@ -34,8 +32,8 @@ class Kanto_rbg(SDK):
         CHARMAP_EN[0xA0 + _i] = _c
     for _i, _c in enumerate('0123456789'):
         CHARMAP_EN[0xF6 + _i] = _c
-    CHARMAP_EN.update({0xE8: '.', 0xE9: 'l', 0xEA: 's', 0xEB: 't', 0xEC: 'v',
-                              0xE0: "'", 0xE3: ' ',   # apostrophe + space variant
+    CHARMAP_EN.update({0xE8: 'd', 0xE9: 'l', 0xEA: 's', 0xEB: 't', 0xEC: 'v',
+                              0xE3: ' ',   # space variant (SAND ATTACK)
                               0xEF: '♂', 0xF5: '♀',  # gender symbols (Gen II trainer classes)
                               0xE6: 'é',   # accented e (Pokémon, Poké Ball etc.)
                               0xE7: "'",   # apostrophe (FARFETCH'D)
@@ -360,30 +358,6 @@ class Kanto_rbg(SDK):
             text_tables['moves'] = names
 
     @staticmethod
-    def _scan_gen12_moves_en(rom_data: bytes, charmap: dict, eos: int, text_tables: dict, count: int = 165):
-        """Scan EN Gen I/II move names: variable-length, eos-terminated, POUND first.
-        0-indexed like the JP table (Pound = 0, so move id = index + 1)."""
-        if 'moves' in text_tables:
-            return
-        reverse = {}
-        for k, v in sorted(charmap.items()):  # first byte wins: space is 0x7F, not a later alias
-            if isinstance(v, str) and len(v) == 1: reverse.setdefault(v, k)
-        try:
-            enc = lambda s: bytes([reverse[ch] for ch in s]) + bytes([eos])
-            anchor = enc('POUND') + enc('KARATE CHOP')
-        except KeyError:
-            return
-        i = rom_data.find(anchor)
-        if i < 0:
-            return
-        names = []
-        while len(names) < count:
-            j = rom_data.index(eos, i)
-            names.append(''.join(charmap.get(b, '?') for b in rom_data[i:j]))
-            i = j + 1
-        text_tables['moves'] = names
-
-    @staticmethod
     def _scan_gen1_species_varlen(rom_data: bytes, charmap: dict, eos: int,
                                   text_tables: dict,
                                   anchor_pair: tuple = ('サイドン', 'ガルーラ')):
@@ -561,93 +535,19 @@ class Kanto_rbg(SDK):
         if len(dex_names) > 10:
             text_tables['species'] = dex_names
 
-
-    # ── Base decoders (Gen I format) ──
-    # Personal: 28 bytes. [dex][HP][Atk][Def][Spe][Spc][T1][T2][catch][exp][dim][fptr(2)][bptr(2)][mv1-4][growth][TM(7)]
-    def decode_personal(self, data, file_idx, text_tables, **kw):
-        import struct
-        if len(data) < 28: return None
-        dex, hp, atk, dfn, spe, spc = struct.unpack_from('<6B', data, 0)
-        t1, t2 = data[6], data[7]
-        catch, base_exp = data[8], data[9]
-        moves = [data[15], data[16], data[17], data[18]]
-        growth = data[19]
-        sp = text_tables.get('species', [])
-        mv = text_tables.get('moves', [])
-        name = sp[dex] if dex < len(sp) else f'#{dex}'
-        lines = [f"#{dex} {name}"]
-        lines.append(f"HP {hp} / Atk {atk} / Def {dfn} / Spe {spe} / Spc {spc}")
-        t1n = self.TYPE_NAMES.get(t1, f'?{t1}')
-        t2n = self.TYPE_NAMES.get(t2, f'?{t2}')
-        lines.append(f"Type: {t1n}" + (f"/{t2n}" if t1 != t2 else ""))
-        lines.append(f"Catch rate: {catch}  Base Exp: {base_exp}")
-        lines.append(f"Growth: {self.GROWTH_RATES.get(growth, f'?{growth}')}")
-        start_moves = [mv[m] if m < len(mv) else f'#{m}' for m in moves if m != 0]
-        if start_moves:
-            lines.append(f"Starting moves: {', '.join(start_moves)}")
-        return '\n'.join(lines)
-
-    # Move data: 6 bytes. [anim][effect][power][type][accuracy][pp]
-    def decode_move(self, data, file_idx, text_tables, **kw):
-        if len(data) < 6: return None
-        anim, effect, power, mtype, acc, pp = data[0], data[1], data[2], data[3], data[4], data[5]
-        mv = text_tables.get('moves', [])
-        name = mv[file_idx] if file_idx < len(mv) else f'Move #{file_idx}'
-        tn = self.TYPE_NAMES.get(mtype, f'?{mtype}')
-        lines = [f"{name} ({tn})"]
-        lines.append(f"Power: {power}  Accuracy: {acc}  PP: {pp}")
-        if effect: lines.append(f"Effect: {effect}")
-        return '\n'.join(lines)
-
-    # Evolution: uses _extract_gen12_evo_learnset, returns evo part
-    def decode_evolution(self, data, file_idx, text_tables, **kw):
-        evos, _ = self._extract_gen12_evo_learnset(file_idx, self._current_rom_ref(), text_tables)
-        if not evos: return "No evolutions"
-        sp = text_tables.get('species', [])
-        name = sp[file_idx] if file_idx < len(sp) else f'#{file_idx}'
-        return f"{name}\n" + '\n'.join(evos)
-
-    # Learnset: uses _extract_gen12_evo_learnset, returns learnset part
-    def decode_learnset(self, data, file_idx, text_tables, **kw):
-        _, ldata = self._extract_gen12_evo_learnset(file_idx, self._current_rom_ref(), text_tables)
-        if ldata is None: return None
-        mv = text_tables.get('moves', [])
-        sp = text_tables.get('species', [])
-        name = sp[file_idx] if file_idx < len(sp) else f'#{file_idx}'
-        lines = [f"{name} — Learnset"]
-        i = 0
-        while i + 1 < len(ldata):
-            lvl, mid = ldata[i], ldata[i+1]
-            mname = mv[mid] if mid < len(mv) else f'#{mid}'
-            lines.append(f"  Lv. {lvl}: {mname}")
-            i += 2
-        return '\n'.join(lines) if len(lines) > 1 else f"{name} — No moves learned by level"
-
-    # Trainer: wraps existing decode_trainer_class with consistent signature
-    def decode_trainer(self, data, file_idx, text_tables, **kw):
-        return self.decode_trainer_class(file_idx, self._current_rom_ref(), text_tables)
-
-    def _current_rom_ref(self):
-        """Build a minimal current_rom dict from self for Gen I/II decoders."""
-        return {
-            'data': bytes(self.rom) if self.rom else b'',
-            'header': self.header or {},
-            'type': self.rom_type or 'gb',
-            'gen1_offsets': getattr(self, '_gen1_offsets', {}),
-        }
-
-    def decode_encounters(self, map_idx: int, current_rom: dict, text_tables: dict) -> str:
+    @staticmethod
+    def decode_encounters(self, data, map_idx: int, text_tables: dict, **kw) -> str:
         """Decode Gen I/II wild encounters for a given map index.
         Format: [rate][species,level]×10[water_rate][species,level]×10 = 42 bytes per map.
         Species are internal constants; convert via dex_table → species text table."""
-        if not current_rom:
+        g1off = self._gen1_offsets
+        if not g1off:
             return ''
-        g1off    = current_rom.get('gen1_offsets', {})
         table    = g1off.get('enc_table_base', 0)
         bank_base = g1off.get('enc_bank_base', 0)
         if not table or not bank_base:
             return ''
-        rom_data = bytes(current_rom.get('data') or b'')
+        rom_data = bytes(self.rom)
         ptr_off  = table + map_idx * 2
         if ptr_off + 2 > len(rom_data):
             return ''
@@ -702,122 +602,17 @@ class Kanto_rbg(SDK):
 
         return '\n'.join(lines)
 
-    def _g1_scan(self):
-        """Map names + static/gift mons, all found by shape.
-        Names: town-map entries (one 3-byte entry per outdoor map, then 4-byte 'first map id past this name' entries, 0xFF end).
-        Objects: header -> object data; text byte bit 0x40 = battle object, next byte < 200 = species (else trainer class).
-        ASM: 'lb bc, sp/lv; call GivePokemon' and 'ld a, sp; ld [wCurOpponent]; ld a, lv; ld [wCurEnemyLevel]' -- the
-        call target / RAM pair is whichever one the ROM uses most inside map scripts."""
-        import re, bisect, collections
-        r = bytes(self._current_rom_ref().get('data') or b'')
-        if getattr(self, '_g1_key', None) == r[0x134:0x150]: return
-        self._g1_key, self._g1_names, self._g1_statics = r[0x134:0x150], {}, []
-        u = lambda o: r[o] | r[o + 1] << 8
-        A = lambda bk, p: bk * 0x4000 + p - 0x4000 if 0x4000 <= p < 0x8000 else None
-        S = lambda bk, p: (lambda a: a if a is not None and a < r.find(b'\x50', a, a + 24) else None)(A(bk, p))
-        cm = (next((getattr(self, k) for k in dir(self) if 'CHARMAP' in k and 'JP' in k), None) if r[0x14A] == 0 else None) or self.CHARMAP_EN
-        for o in range(0x4003, len(r) - 8):
-            bk, n = o // 0x4000, 0
-            while o + 4 * n + 4 < len(r) and r[o + 4 * n] != 0xFF and (n == 0 or r[o + 4 * n] > r[o + 4 * n - 4]) and S(bk, u(o + 4 * n + 2)) is not None: n += 1
-            if n < 20 or r[o + 4 * n] != 0xFF: continue
-            k = 0
-            while S(bk, u(o - 3 * k - 2)) is not None: k += 1
-            if 20 <= k < r[o]: break
-        else: return
-        dec = lambda a: ''.join(cm.get(ch, ' ' if ch == 0x4E else '') for ch in r[a:r.find(b'\x50', a)]).strip()
-        for i in range(k): self._g1_names[i] = dec(S(bk, u(o - 3 * k + 3 * i + 1)))
-        j = 0
-        for mi in range(k, 256):
-            while j < n and mi >= r[o + 4 * j]: j += 1
-            if j < n: self._g1_names[mi] = dec(S(bk, u(o + 4 * j + 2)))
-        # Map header table: 248-ish u16 pointers + a parallel bank-byte table (any bank); keep the pairing that yields the longest run of sane headers
-        nb, best = len(r) // 0x4000, (0, 0, 0)
-        def hdr(b, P, i):
-            h = A(b, u(P + 2 * i)) if 0 < b < nb else None
-            if h is None or h + 60 > len(r) or r[h] >= 0x20 or not 0 < r[h + 1] <= 0x40 or not 0 < r[h + 2] <= 0x40 or r[h + 9] > 0xF: return None
-            ob = A(b, u(h + 10 + 11 * bin(r[h + 9]).count('1')))
-            if ob is None or A(b, u(h + 5)) is None or ob + 200 > len(r): return None
-            q = ob + 1; nw = r[q]; q += 1  # object data must parse: warp dests are map ids / 0xFF, <=16 signs and objects, sprites nonzero
-            if nw > 0x20 or any(r[q + 4 * k + 3] not in range(256 - 8) and r[q + 4 * k + 3] != 0xFF for k in range(nw)): return None
-            q += 4 * nw; ns = r[q]; q += 1 + 3 * ns; no = r[q]; q += 1
-            if ns > 16 or no > 16: return None
-            for _ in range(no):
-                if not 0 < r[q] < 0x80: return None
-                q += 8 if r[q + 5] & 0x40 else 7 if r[q + 5] & 0x80 else 6
-            return h
-        Ps = [q for q in range(0, len(r) - 500) if all(0x40 <= r[q + 2 * i + 1] < 0x80 for i in range(240))]
-        Bs = [q for q in range(0x4000, len(r) - 256) if all(0 < r[q + i] < nb for i in range(240))]
-        for P in Ps:
-            for B in Bs:
-                if any(hdr(r[B + k], P, k) is None for k in range(8)): continue  # real table: first maps (towns) all valid; unused slots later are junk, so score the whole table
-                best = max(best, (sum(hdr(r[B + k], P, k) is not None for k in range(256)), -P, B))
-        best = (best[0], -best[1], best[2])
-        N, P, B = 256, best[1], best[2]
-        starts, seen = [], set()
-        for mi in range(N):
-            b = r[B + mi]; h = hdr(b, P, mi)
-            if h is None or h in seen: continue
-            seen.add(h)
-            ob = A(b, u(h + 10 + 11 * bin(r[h + 9] & 0xF).count('1')))
-            if ob is None: continue
-            q = ob + 1; q += 1 + 4 * r[q]; ns = r[q]; q += 1 + 3 * ns; no = r[q]; q += 1
-            for _ in range(no):
-                t = r[q + 5]
-                if t & 0x40 and r[q + 6] < 200 and 0 < r[q + 7] <= 100: self._g1_statics.append((mi, 'static', r[q + 6], r[q + 7]))
-                q += 8 if t & 0x40 else 7 if t & 0x80 else 6
-            tt = A(b, u(h + 5))
-            starts += [(a, mi) for a in [A(b, u(h + 7)), tt] + [A(b, u(tt + 2 * i)) for i in range(ns + no) if tt is not None] if a is not None]
-        starts.sort(); ks = [a for a, _ in starts]
-        def where(x):
-            i = bisect.bisect_right(ks, x) - 1
-            return starts[i][1] if i >= 0 and x - ks[i] < 0x1000 and x // 0x4000 == ks[i] // 0x4000 else None
-        g = [(m.start(), m.group(2)[0], m.group(1)[0], m.group(3)) for m in re.finditer(rb'\x01(.)(.)\xcd(..)', r, re.S)] + [(m.start(), m.group(1)[0], m.group(2)[0], m.group(3)) for m in re.finditer(rb'\x06(.)\x0e(.)\xcd(..)', r, re.S)]
-        g = [(where(x), sp, lv, t) for x, sp, lv, t in g if 0 < sp < 200 and 1 < lv <= 100 and where(x) is not None]  # lv 1 = GiveItem (lb bc, item, 1), Gen I never gifts a Lv1 mon
-        # GivePokemon (home bank) opens with ld a,b / ld [species],a / ld a,c / ld [level],a; the level address it writes is also what scripted battles store to
-        G = {t: r[o + 6:o + 8] for t in {x[3] for x in g} for o in [t[0] | t[1] << 8] if o < 0x3FF0 and r[o] == 0x78 and r[o + 1] == 0xEA and r[o + 4:o + 6] == b'\x79\xea'}
-        self._g1_statics += [(mi, 'gift', sp, lv) for mi, sp, lv, t in g if t in G]
-        LV = set(G.values())
-        w = [(where(m.start()), m.group(1)[0], m.group(3)[0], m.group(2) + m.group(4)) for m in re.finditer(rb'\x3e(.)\xea(..)\x3e(.)\xea(..)', r, re.S)]
-        w = [x for x in w if x[0] is not None and 0 < x[1] < 200 and 1 < x[2] <= 100]
-        w = [x for x in w if x[3][2:] in LV]
-        if w: OPP = collections.Counter(x[3][:2] for x in w).most_common(1)[0][0]; self._g1_statics += [(mi, 'static', sp, lv) for mi, sp, lv, t in w if t[:2] == OPP]  # drops the old man's tutorial (writes battle type, not opponent)
-
-    def map_name(self, mi):
-        self._g1_scan(); return getattr(self, '_g1_names', {}).get(mi)
-
-    def iter_encounters(self):
-        """(id, species_const, form, lo, hi) per map/area/species. Rate byte 0 = no slots follow (grass skipped -> surf rate is next byte)."""
-        ref = self._current_rom_ref(); g, rom = ref.get('gen1_offsets', {}), bytes(ref.get('data') or b'')
-        t, bank = g.get('enc_table_base', 0), g.get('enc_bank_base', 0)
-        if not t or not bank: return None
-        out = []
-        for mi in range(248):
-            pv = int.from_bytes(rom[t + mi * 2:t + mi * 2 + 2], 'little')
-            if not 0x4000 <= pv <= 0x7FFF: continue
-            a = bank + pv - 0x4000
-            for area in ('grass', 'surf'):
-                if a >= len(rom): break
-                rate = rom[a]; a += 1
-                if not rate: continue
-                seen = {}
-                for j in range(10): seen.setdefault(rom[a + 2 * j + 1], []).append(rom[a + 2 * j])
-                a += 20
-                out += [(f"{self.map_name(mi) or 'Map'} [{mi}] {area}", sp, 0, min(l), max(l), {'location': self.map_name(mi) or f'Map [{mi}]', 'method': area}) for sp, l in seen.items()]
-        self._g1_scan()
-        out += [(f"{self.map_name(mi) or 'Map'} [{mi}] {kind}", sp, 0, lv, lv, {'location': self.map_name(mi) or f'Map [{mi}]', 'method': kind}) for mi, kind, sp, lv in dict.fromkeys(self._g1_statics)]
-        return out
-
     def _discover_gen1_tables(self):
         """Find personal/trainer data offsets in a Gen I/II GB/GBC ROM.
 
         Anchors on known data signatures — same philosophy as _discover_gen3_tables().
         Results stored in self._gen1_offsets.
         """
-        rom_data = getattr(self, 'rom', b'')
+        if not hasattr(self, 'rom_type') or self.rom_type not in ('gb', 'gbc'):
+            return None
+        rom_data = bytes(self.rom)
         if not rom_data:
             return None
-        rom_data = bytes(rom_data)
-        text_tables = getattr(self, 'text_tables', {})
 
         offsets = {}
 
@@ -982,7 +777,7 @@ class Kanto_rbg(SDK):
         # Structure: one pointer per class, each pointing to [name 0x50 fmt party 0xFF] groups.
         # Ordering (from pret/pokegold): Falkner=0, Whitney=1 ... Rival1=8 ... Champion=15 ... Red=62
         # Anchor: "FALKNER@" is class 0 (first entry) — its pointer appears with no valid ptr before it.
-        if self.CONTAINER == 'gbc':
+        if self.rom_type == 'gbc':
             falkner_name = bytes([0x85, 0x80, 0x8B, 0x8A, 0x8D, 0x84, 0x91, 0x50])
             falkner_abs  = rom_data.find(falkner_name)
             if falkner_abs >= 0:
@@ -1056,7 +851,7 @@ class Kanto_rbg(SDK):
             for i in range(len(rom_data) - 42):
                 if rom_data[i] != 0x19: continue
                 levels = [rom_data[i + 1 + j*2] for j in range(10)]
-                if not all(self.ENC_ANCHOR_LEVELS[0] <= l <= self.ENC_ANCHOR_LEVELS[1] for l in levels): continue
+                if not all(2 <= l <= 5 for l in levels): continue
                 water_rate = rom_data[i + 21]
                 if water_rate != 0: continue
                 species_set = {rom_data[i + 2 + j*2] for j in range(10)}
@@ -1087,7 +882,7 @@ class Kanto_rbg(SDK):
         # Format per entry: [map_group][map_number][morn_rate][day_rate][nite_rate]
         #   + 7×[lv,sp] morning + 7×[lv,sp] day + 7×[lv,sp] night = 47 bytes
         # Anchor: Route 29 — group=24(0x18), map=3, rates=25,25,25, first morning = lv2 Pidgey(sp16)
-        if self.CONTAINER == 'gbc':
+        if self.rom_type == 'gbc':
             def _valid_gen2_entry(off):
                 if off + 47 > len(rom_data): return False
                 r1, r2, r3 = rom_data[off+2], rom_data[off+3], rom_data[off+4]
@@ -1106,12 +901,19 @@ class Kanto_rbg(SDK):
                     off -= 47
                 offsets['enc2_table_base'] = off
                 offsets['enc2_route29_offset'] = r29_off - off
-                # Also find the Kanto table — anchor on Diglett's Cave (3,75) with Diglett(50) morning
-                # Diglett's Cave: rates ~10, first morning sp includes 50(Diglett)
-                kanto_sig = bytes([3, 75])  # group=3, map=75 = Diglett's Cave
-                kanto_off = rom_data.find(kanto_sig, off)  # Kanto table follows the Johto one; from byte 0 this hits code first
-                if kanto_off >= 0 and _valid_gen2_entry(kanto_off):
-                    offsets['enc2_kanto_table_base'] = kanto_off
+                # Kanto table follows Johto: grass FF water FF kanto_grass
+                # Walk past Johto grass table end, then past water entries
+                johto_end = off
+                while johto_end + 47 <= len(rom_data) and rom_data[johto_end] != 0xFF:
+                    johto_end += 47
+                if johto_end < len(rom_data) and rom_data[johto_end] == 0xFF:
+                    water_off = johto_end + 1
+                    while water_off + 9 <= len(rom_data) and rom_data[water_off] != 0xFF:
+                        water_off += 9
+                    if water_off < len(rom_data) and rom_data[water_off] == 0xFF:
+                        kanto_off = water_off + 1
+                        if _valid_gen2_entry(kanto_off):
+                            offsets['enc2_kanto_table_base'] = kanto_off
 
         if offsets:
             self._gen1_offsets = offsets
@@ -1125,15 +927,14 @@ class Kanto_rbg(SDK):
     }
     GROWTH_RATES = {0:'Medium Fast', 1:'Fast', 2:'Slow', 3:'Medium Slow'}
 
-    @staticmethod
-    def _gen1_resolve_const(key: str, g1off: dict, current_rom: dict, text_tables: dict) -> int:
+    def _gen1_resolve_const(self, key: str, g1off: dict, text_tables: dict) -> int:
         """Resolve a species name, dex number, or constant to a game constant (1-based)."""
         sp_list = text_tables.get('species', [])
         if key.isdigit():
             dex_num = int(key)
             # Dex number → game constant via dex_table
             dex_tb = g1off.get('dex_table_base', 0)
-            rom_data = bytes((current_rom or {}).get('data') or b'')
+            rom_data = bytes(self.rom)
             if dex_tb and rom_data:
                 dex_table = list(rom_data[dex_tb: dex_tb + 190])
                 for const, dex in enumerate(dex_table):
@@ -1147,23 +948,21 @@ class Kanto_rbg(SDK):
                 return i
         return -1
 
-    @staticmethod
-    def _extract_gen12_evo_learnset(const: int, current_rom: dict, text_tables: dict):
+    def _extract_gen12_evo_learnset(self, const: int, text_tables: dict):
         """Extract raw evo entries + learnset u8 pairs from Gen I/II combined evo+learnset table.
         Returns (evo_lines: list[str], learnset_bytes: bytes) or (None, None) on failure."""
-        g1off = (current_rom or {}).get('gen1_offsets', {})
+        g1off = self._gen1_offsets
         table, db = g1off.get('evo_learnset_table', 0), g1off.get('evo_learnset_data_base', 0)
-        if not table or not db or not current_rom:
+        if not table or not db:
             return None, None
-        rom_data = bytes(current_rom.get('data') or b'')
+        rom_data = bytes(self.rom)
         ptr_off = table + (const - 1) * 2
         if ptr_off + 2 > len(rom_data):
             return None, None
         i = db + int.from_bytes(rom_data[ptr_off:ptr_off + 2], 'little')
         sp_list, it_list = text_tables.get('species', []), text_tables.get('items', [])
         # Parse variable-length evo entries
-        # Gen I: level/item(+lv)/trade(+1). Gen II (32B personal): all 3 bytes except stat (Tyrogue) = 4.
-        _EVO_SIZES = {1: 3, 2: 3, 3: 3, 4: 3, 5: 4} if g1off.get('personal_size') == 0x20 else {1: 3, 2: 4, 3: 3, 4: 4}
+        _EVO_SIZES = {1: 3, 2: 4, 3: 2, 4: 4}
         evos = []
         while i < len(rom_data) and rom_data[i] != 0x00:
             method = rom_data[i]
@@ -1186,15 +985,16 @@ class Kanto_rbg(SDK):
             i += 2
         return evos, rom_data[start:i]
 
-    def decode_trainer_class(self, class_id, current_rom: dict, text_tables: dict, direct_off: int = None, label: str = None) -> str:
+    @staticmethod
+    def decode_trainer_class(self, data, class_id, text_tables: dict, direct_off: int = None, label: str = None, **kw) -> str:
         """Decode a Gen I or Gen II trainer class. Detects gen from personal_size.
         Gen I: fixed-level or 0xFF individual-levels format, class-terminated by 0xFF.
         Gen II: name+0x50, format byte, party 0xFF-terminated. Format 0-3 controls member size.
         Pass direct_off for gym leaders (Gen I only)."""
-        g1off = (current_rom or {}).get('gen1_offsets', {})
-        if not current_rom:
+        g1off = self._gen1_offsets
+        if not g1off:
             return ''
-        rom_data = bytes(current_rom.get('data') or b'')
+        rom_data = bytes(self.rom)
         is_gen2 = g1off.get('personal_size', 28) == 32
         sp_list = text_tables.get('species', [])
         mv_list = text_tables.get('moves', [])
@@ -1310,37 +1110,174 @@ class Kanto_rbg(SDK):
         'Pocket Monsters Yellow (JP)': ['PMYJ'],
     }
 
-    TABLE_FINGERPRINTS_JP = (
-        ('species',    ((1, "フシギダネ"), (4, "ヒトカゲ"))),
-        ('moves',      ((0, "はたく"), (4, "メガトンパンチ"))),
-        ('items',      ((1, "マスターボール"),)),
-        ('natures',    ((0, "がんばりや"), (1, "さみしがり"), (3, "いじっぱり"))),
-        ('type_names', ((0, "ノーマル"),)),
-    )
+    TABLE_FINGERPRINTS_JP = {
+        'species':    [(1, "フシギダネ"), (4, "ヒトカゲ")],
+        'moves':      [(0, "はたく"), (4, "メガトンパンチ")],  # JP Gen I: Pound at index 0 (no dummy)
+        'items':      [(1, "マスターボール")],
+        'natures':    [(0, "がんばりや"), (1, "さみしがり"), (3, "いじっぱり")],
+        'type_names': [(0, "ノーマル")],
+    }
 
-    LEARNSET_COUNT = 190  # internal species consts (Rhydon=1), not dex order
+    def _scan_gen12_moves_en(self, count=165):
+        """Scan EN Gen I/II move names from ROM. POUND+KARATE CHOP anchor."""
+        if 'moves' in self.text_tables:
+            return
+        charmap, eos = self.CHARMAP_EN, self.EOS
+        rom = bytes(self.rom)
+        reverse = {}
+        for k, v in sorted(charmap.items()):
+            if isinstance(v, str) and len(v) == 1: reverse.setdefault(v, k)
+        try:
+            enc = lambda s: bytes([reverse[ch] for ch in s]) + bytes([eos])
+            anchor = enc('POUND') + enc('KARATE CHOP')
+        except KeyError:
+            return
+        i = rom.find(anchor)
+        if i < 0:
+            return
+        names = []
+        while len(names) < count:
+            j = rom.index(eos, i)
+            names.append(''.join(charmap.get(b, '?') for b in rom[i:j]))
+            i = j + 1
+        self.text_tables['moves'] = names
 
     def learnset_moves(self, data):
-        """Raw learnset for reverse lookup: [(level, move_idx)]. u8 pairs, Gen I/II.
-        Cartridge move ids are 1-based; shifted to index the 0-based moves table."""
+        """Raw learnset pairs: [(level, move_idx)]. u8 pairs, 1-based shifted to 0-based."""
         return [(data[i], data[i + 1] - 1) for i in range(0, len(data) - 1, 2)]
 
+    def map_name(self, mi):
+        self._g1_scan()
+        return getattr(self, '_g1_names', {}).get(mi)
+
+    def iter_encounters(self):
+        """Yield (area_name, species, form, lo_level, hi_level, metadata) per encounter slot."""
+        g = self._gen1_offsets
+        rom = bytes(self.rom)
+        t, bank = g.get('enc_table_base', 0), g.get('enc_bank_base', 0)
+        if not t or not bank: return
+        out = []
+        for mi in range(248):
+            pv = int.from_bytes(rom[t + mi * 2:t + mi * 2 + 2], 'little')
+            if not 0x4000 <= pv <= 0x7FFF: continue
+            a = bank + pv - 0x4000
+            for area in ('grass', 'surf'):
+                if a >= len(rom): break
+                rate = rom[a]; a += 1
+                if not rate: continue
+                seen = {}
+                for j in range(10): seen.setdefault(rom[a + 2 * j + 1], []).append(rom[a + 2 * j])
+                a += 20
+                name = self.map_name(mi) or f'Map [{mi}]'
+                out += [(f"{name} [{mi}] {area}", sp, 0, min(l), max(l), {'location': name, 'method': area}) for sp, l in seen.items()]
+        self._g1_scan()
+        out += [(f"{(self.map_name(mi) or f'Map [{mi}]')} [{mi}] {kind}", sp, 0, lv, lv, {'location': self.map_name(mi) or f'Map [{mi}]', 'method': kind}) for mi, kind, sp, lv in dict.fromkeys(getattr(self, '_g1_statics', []))]
+        return out
+
     def iter_learnsets(self):
-        """Cartridge: learnsets sit in the combined evo+learnset pointer table, not files.
-        Gen I keeps Lv1 moves in base stats (0x0F-0x12), so those are prepended."""
-        ref = self._current_rom_ref()
-        g, rom = ref['gen1_offsets'], ref['data']
+        """Yield (species_const, [(level, move_id)]) per species."""
+        g = self._gen1_offsets
+        rom = bytes(self.rom)
         pb, dx = g.get('personal_base', 0), g.get('dex_table_base', 0)
-        for c in range(1, self.LEARNSET_COUNT + 1):
-            _, d = self._extract_gen12_evo_learnset(c, ref, {})
+        count = 251 if self.GEN == 2 else self.SPECIES_COUNT
+        for c in range(1, count + 1):
+            _, d = self._extract_gen12_evo_learnset(c, self.text_tables)
             if d is None: continue
             ls = self.learnset_moves(d)
             if g.get('personal_size') == 0x1C and pb and dx:
                 dex = rom[dx + c]; p = pb + (dex - 1) * 0x1C
-                if dex == 151 and rom[p] != dex: p = rom.find(bytes([151, 100, 100, 100, 100, 100]))  # R/B Mew row lives outside the table
-                if dex and rom[p] == dex:  # R/B Mew lives outside the table: skip rather than misread
+                if dex == 151 and rom[p] != dex: p = rom.find(bytes([151, 100, 100, 100, 100, 100]))
+                if dex and rom[p] == dex:
                     ls = [(1, m - 1) for m in rom[p + 0x0F:p + 0x13] if m] + ls
             yield c, ls
+
+    def _g1_scan(self):
+        """Build map_id -> name dict from the ROM's own town map name table."""
+        r = bytes(self.rom)
+        if getattr(self, '_g1_key', None) == r[0x134:0x150]: return
+        self._g1_key = r[0x134:0x150]
+        self._g1_names = {}
+        self._g1_statics = []
+        cm = self.CHARMAP_EN
+        eos = self.EOS
+        # Find name table: "PALLET TOWN" anchor
+        rev = {}
+        for k, v in sorted(cm.items()):
+            if isinstance(v, str) and len(v) == 1: rev.setdefault(v, k)
+        try: anchor = bytes([rev[c] for c in 'PALLET']) + bytes([rev.get(' ', 0x7F)]) + bytes([rev[c] for c in 'TOWN']) + bytes([eos])
+        except KeyError: return
+        base = r.find(anchor)
+        if base < 0: return
+        # Read 36 names: 11 cities + 25 routes
+        names, pos = [], base
+        while len(names) < 36 and pos < len(r) - 1:
+            end = r.index(eos, pos)
+            names.append(''.join(cm.get(b, '?') for b in r[pos:end]))
+            pos = end + 1
+        # Outdoor maps: 0-10 = cities (direct), 12-36 = routes (index = id-1)
+        for mi in range(min(11, len(names))): self._g1_names[mi] = names[mi]
+        for mi in range(12, 37):
+            ni = mi - 1
+            if ni < len(names): self._g1_names[mi] = names[ni]
+        # Static pokemon: follow map headers -> object data
+        bank_table = None
+        ptr_table = None
+        # Scan for map header bank table: 248 consecutive bytes, each a valid bank (1-63)
+        nb = len(r) // 0x4000
+        for off in range(0xC000, min(len(r) - 248, 0x10000)):
+            if all(0 < r[off + i] < nb for i in range(10)):
+                # Verify: map 0 bank should point to a valid header
+                b0 = r[off]
+                # Check a few more maps have reasonable banks
+                if all(0 < r[off + i] < nb for i in range(248)):
+                    bank_table = off
+                    break
+        if not bank_table: return
+        # Pointer table: 248 entries of 2-byte pointers, all in 0x4000-0x7FFF range
+        for off in range(0, min(len(r) - 496, 0x4000)):
+            if all(0x40 <= r[off + 2*i + 1] < 0x80 for i in range(10)):
+                ptr_table = off
+                break
+        if not ptr_table: return
+        def resolve(bk, ptr):
+            return bk * 0x4000 + (ptr - 0x4000) if 0x4000 <= ptr < 0x8000 else None
+        for mi in range(248):
+            bk = r[bank_table + mi]
+            ptr = r[ptr_table + mi*2] | (r[ptr_table + mi*2 + 1] << 8)
+            h = resolve(bk, ptr)
+            if h is None or h + 12 > len(r): continue
+            # Map header: tileset(1), h(1), w(1), map_data(2), text(2), script(2), connections(1)
+            conn = r[h + 9]
+            conn_size = 11 * bin(conn & 0xF).count('1')
+            obj_ptr_off = h + 10 + conn_size
+            if obj_ptr_off + 2 > len(r): continue
+            obj_ptr = r[obj_ptr_off] | (r[obj_ptr_off + 1] << 8)
+            obj_addr = resolve(bk, obj_ptr)
+            if obj_addr is None or obj_addr + 4 > len(r): continue
+            # Object data: border(1), warps_count(1), warps(4*n), signs_count(1), signs(3*n), objects_count(1), objects(variable)
+            q = obj_addr + 1
+            nw = r[q]; q += 1 + 4 * nw
+            if q >= len(r): continue
+            ns = r[q]; q += 1 + 3 * ns
+            if q >= len(r): continue
+            no = r[q]; q += 1
+            if no > 16: continue
+            for _ in range(no):
+                if q + 6 > len(r): break
+                sprite = r[q]
+                text_id = r[q + 5]
+                if text_id & 0x40:
+                    # Battle object: next byte is species or trainer class
+                    if q + 7 > len(r): break
+                    sp = r[q + 6]
+                    lv = r[q + 7] if q + 7 < len(r) else 0
+                    if sp < 200 and 0 < lv <= 100:
+                        self._g1_statics.append((mi, 'static', sp, lv))
+                    q += 8
+                elif text_id & 0x80:
+                    q += 7
+                else:
+                    q += 6
 
     # Clean attribute names for spec-based access
     DISCOVER_TABLES = _discover_gen1_tables
@@ -1356,7 +1293,7 @@ class Kanto_rbg(SDK):
         for idx, table in enumerate(candidates):
             self.text_tables[idx] = table
 
-        jp = region == 'JP'
+        jp = getattr(self, 'JP', False)
         if jp:
             self._scan_gen1_species_varlen(rom_data, charmap, eos, self.text_tables)
             self._scan_gen1_moves_jp(rom_data, charmap, eos, self.text_tables)
@@ -1366,7 +1303,6 @@ class Kanto_rbg(SDK):
             self._scan_gen1_species(rom_data, charmap, eos, self.text_tables)
             self._scan_gen1_trainer_classes_en(rom_data, charmap, eos, self.text_tables)
             self._scan_gen1_items(rom_data, charmap, eos, self.text_tables)
-            self._scan_gen12_moves_en(rom_data, charmap, eos, self.text_tables, 165)
 
         self._auto_detect_tables()
         self._map_text_tables()

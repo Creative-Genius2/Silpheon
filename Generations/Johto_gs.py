@@ -25,7 +25,7 @@ class Johto_gs(Kanto_yellow):
     def _discover_gen2_tables(self):
         """Gen I finder + the evo/learnset pointer table (Gen I's locator doesn't match Gen II)."""
         off = super()._discover_gen1_tables() or {}
-        d = bytes(self.rom or b'')
+        d = bytes(self.rom)
         P = d.find(bytes([1, 16, 2, 0, 1, 0x21, 4, 0x2D, 7, 0x49]))  # Bulbasaur: Lv16->Ivysaur, then Tackle/Growl/Leech Seed
         if P > 0:
             b = P // 0x4000
@@ -114,57 +114,6 @@ class Johto_gs(Kanto_yellow):
         if len(names) > 4:
             text_tables['trainer_classes'] = names
 
-    def decode_encounters(self, map_group: int, map_number: int, current_rom: dict, text_tables: dict) -> str:
-        """Decode Gen II wild encounters for a map identified by (group, map_number).
-        Format: [group][map][morn_rate][day_rate][nite_rate][7×lv,sp morning][day][night] = 47B
-        Species = Pokédex numbers (same as Gen 2 trainer data)."""
-        if not current_rom:
-            return ''
-        g1off    = current_rom.get('gen1_offsets', {})
-        table        = g1off.get('enc2_table_base', 0)
-        kanto_table  = g1off.get('enc2_kanto_table_base', 0)
-        if not table:
-            return ''
-        rom_data = bytes(current_rom.get('data') or b'')
-        sp_list  = text_tables.get('species', [])
-
-        def sp_name(dex):
-            if 0 < dex < len(sp_list) and sp_list[dex]:
-                return sp_list[dex]
-            return f'sp#{dex}'
-
-        # Scan both tables for matching entry (Johto table + Kanto table)
-        for table_start in [t for t in [table, kanto_table] if t]:
-            off = table_start
-            while off + 47 <= len(rom_data):
-                mg = rom_data[off]
-                mn = rom_data[off + 1]
-                if mg == 0xFF:
-                    break
-                if mg == map_group and mn == map_number:
-                    morn_rate = rom_data[off + 2]
-                    day_rate  = rom_data[off + 3]
-                    nite_rate = rom_data[off + 4]
-                    lines = [f'Map {map_group}/{map_number}']
-                    for period_idx, (label, rate) in enumerate(
-                            [('Morning', morn_rate), ('Day', day_rate), ('Night', nite_rate)]):
-                        if rate == 0:
-                            continue
-                        lines.append(f'Grass ({label}):')
-                        seen = {}
-                        for slot in range(7):
-                            base = off + 5 + period_idx * 14 + slot * 2
-                            lv = rom_data[base]
-                            sp = rom_data[base + 1]
-                            name = sp_name(sp)
-                            seen.setdefault(name, []).append(lv)
-                        for name, lvs in seen.items():
-                            lv_str = f'Lv. {min(lvs)}-{max(lvs)}' if min(lvs) != max(lvs) else f'Lv. {min(lvs)}'
-                            lines.append(f'  {name:<20}{lv_str}')
-                    return '\n'.join(lines)
-                off += 47
-        return ''
-
     SCRIPT_LOADWILDMON, SCRIPT_STARTBATTLE, SCRIPT_GIVEPOKE = 0x5C, 0x5E, 0x2D
 
     def map_name(self, group, num):
@@ -174,7 +123,7 @@ class Johto_gs(Kanto_yellow):
         import struct
         if getattr(self, '_map_names', None) is None:
             self._map_names, self._map_regions = {}, {}
-            r = bytes(self._current_rom_ref().get('data') or b''); L = len(r); NB = L // 0x4000
+            r = bytes(self.rom); L = len(r); NB = L // 0x4000
             A = lambda b, p: b * 0x4000 + p - 0x4000 if 0x4000 <= p < 0x8000 and 0 < b < NB else None
             def head(o):
                 if o is None or o + 9 > L or not 1 <= r[o + 2] <= 7: return None
@@ -209,7 +158,7 @@ class Johto_gs(Kanto_yellow):
 
     def iter_encounters(self):
         """(id, dex, form, lo, hi) per map/time/species. Johto + Kanto grass tables, 47B rows, FF-terminated."""
-        ref = self._current_rom_ref(); g, rom = ref.get('gen1_offsets', {}), bytes(ref.get('data') or b'')
+        g, rom = self._gen1_offsets, bytes(self.rom)
         out = []
         tables = [x for x in (g.get('enc2_table_base', 0), g.get('enc2_kanto_table_base', 0)) if x]  # swarm table appended below
         for t in tables:
@@ -236,7 +185,7 @@ class Johto_gs(Kanto_yellow):
         # Statics/gifts: each map's scripts sit between its script header and its events (same bank).
         # loadwildmon (sp, lv) with startbattle a few bytes on; givepoke (sp, lv, item, trainer flag 0/1).
         self.map_name(1, 1)
-        for (g, n), (s, e) in sorted((getattr(self, '_map_regions', None) or {}).items()):
+        for (g, n), (s, e) in sorted(self._map_regions.items()):
             b = s - s % 0x4000 - 0x4000
             jmp = lambda o: rom[o] in (0x00, 0x02, 0x03, 0x05, 0x08, 0x09) and s <= b + (rom[o + 1] | rom[o + 2] << 8) < e  # byte is the pointer operand of a call/jump into this same script
             LW, SB = self.SCRIPT_LOADWILDMON, self.SCRIPT_STARTBATTLE

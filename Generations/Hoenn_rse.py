@@ -287,16 +287,15 @@ class Hoenn_rse(Johto_crystal):
             'party': party,
         }
 
-    @staticmethod
-    def _discover_gen3_tables(current_rom: dict):
+    def _discover_gen3_tables(self):
         """Find personal/move/trainer table offsets in a GBA ROM by searching for known anchors.
 
         Same philosophy as _discover_tm_table() — the data finds itself.
-        Results stored in current_rom['gen3_offsets'].
+        Results stored in self._gen3_offsets.
         """
-        if not current_rom or current_rom['type'] != 'gba':
+        if getattr(self, 'rom_type', 'gba') != 'gba':
             return None
-        rom_data = bytes(current_rom.get('data') or b'')
+        rom_data = bytes(self.rom)
         if not rom_data:
             return None
 
@@ -397,7 +396,7 @@ class Hoenn_rse(Johto_crystal):
         offsets['trainer_size'] = 40
 
         if offsets:
-            current_rom['gen3_offsets'] = offsets
+            self._gen3_offsets = offsets
 
         return offsets if offsets else None
 
@@ -431,7 +430,7 @@ class Hoenn_rse(Johto_crystal):
         (region-map section) -> name ptr list. Both lists found by shape; the name list's length must equal the section range
         the headers use. Emerald/Ruby: 8B entries (x, y, w, h, name ptr), FRLG: bare ptrs. Cached."""
         import struct
-        rom = bytes(self.rom or b''); L = len(rom); B = 0x08000000
+        rom = bytes(self.rom); L = len(rom); B = 0x08000000
         u = lambda a: struct.unpack_from('<I', rom, a)[0]
         V = lambda q: B <= q < B + L - 32
         def head(q):
@@ -480,7 +479,7 @@ class Hoenn_rse(Johto_crystal):
         """(id, species, form, lo, hi). Wild header list found by shape: 20B rows (group, map, pad, 4 ptrs: land/water/rock/fish),
         each ptr -> (rate u8, pad, mons ptr) -> n x (min, max, species u16). FF FF terminates. Located once, cached."""
         import struct
-        rom = bytes(self.rom or b''); L = len(rom)
+        rom = bytes(self.rom); L = len(rom)
         def info(p, n):
             if not p: return True
             a = p - 0x08000000
@@ -540,9 +539,9 @@ class Hoenn_rse(Johto_crystal):
 
     def iter_learnsets(self):
         """GBA: one pointer per species slot. Table located once by the Gen III finder, cached."""
-        rom = bytes(self.rom or b'')
+        rom = bytes(self.rom)
         if getattr(self, '_learnset_table', None) is None:
-            self._learnset_table = (self._discover_gen3_tables(self._current_rom_ref()) or {}).get('learnset_ptr_table', 0)
+            self._learnset_table = (self._discover_gen3_tables() or {}).get('learnset_ptr_table', 0)
         t = self._learnset_table
         if not t: return
         for s in range(1, self.LEARNSET_COUNT + 1):
