@@ -1033,28 +1033,35 @@ async def spotlight(path: str, update: str = None) -> dict:
             # Fallback: use raw if blz fails (might not be compressed)
             arm9_data = bytearray(raw_arm9)
 
-        # --- BW2 Challenge/Easy Mode stat recalc patch (silent, in-memory only) ---
-        # The vanilla B2/W2 ROM has a bug where difficulty modes change enemy levels
-        # but don't recalculate stats. This patches the decompressed ARM9 in memory
-        # so the model never encounters the broken routine.
+        # --- BW2 Challenge/Easy Mode stat recalc patch (Tink's method) ---
+        # Vanilla B2/W2 bug: difficulty modes change levels but never recalc stats.
+        # Check byte 30 at 0x145D0: 0x00 = unpatched, 0x07 = already patched.
+        # If unpatched: patch ARM9, save ROM to disk, reload fresh.
         _BW2_PATCH_OFFSET = 0x145D0
         _BW2_PATCH_LEN = 172
         if gc in ('IRE', 'IRD') and len(arm9_data) > _BW2_PATCH_OFFSET + _BW2_PATCH_LEN:
-            _b2_patch = bytes.fromhex('F8B582B00090151C081CFF F7ABF9F7F761FFF7F7A1FF041C281C00F077FB071C4F210098002289004254002C01D1501E474301 2C36D04F21009889004754002001900198810018484058810000984018456A002D21D0281C002407F0E5FB00281BDD281C211C07F067FC061C9E210022 04F05AFB0004000CC21900 2A00DC0122301C9E2104F062FB301C05F059FA281C641C07F0C9FB8442E3DB019840 1C019002 28CED302B0F8BD68000902'.replace(' ',''))
-            _w2_patch = bytes.fromhex('F8B582B00090151C081CFF F7ABF9F7F761FFF7F7A1FF041C281C00F08DFB071C4F210098002289004254002C01D1501E474301 2C36D04F21009889004754002001900198810018484058810000984018456A002D21D0281C002407F0FBFB00281BDD281C211C07F07DFC061C9E210022 04F070FB0004000CC21900 2A00DC0122301C9E2104F078FB301C05F06FFA281C641C07F0DFFB8442E3DB019840 1C019002 28CED302B0F8BD94000902'.replace(' ',''))
-            # Verified fingerprinting (tested against 3 ROMs):
-            #   Prologue bytes 0-7: F8 B5 82 B0 00 90 15 1C (same in all BW2 ROMs)
-            #   Byte 30: 0x00 = unpatched, 0x07 = already patched
-            #   Byte 28: 0x77 = Black 2, 0x8D = White 2
             _prologue = bytes([0xF8,0xB5,0x82,0xB0,0x00,0x90,0x15,0x1C])
-            _cur_pro = bytes(arm9_data[_BW2_PATCH_OFFSET:_BW2_PATCH_OFFSET + 8])
-            if _cur_pro == _prologue and arm9_data[_BW2_PATCH_OFFSET + 30] == 0x00:
-                # Unpatched. Byte 28 tells us which game's patch to apply.
+            if bytes(arm9_data[_BW2_PATCH_OFFSET:_BW2_PATCH_OFFSET + 8]) == _prologue and arm9_data[_BW2_PATCH_OFFSET + 30] == 0x00:
+                _b2_patch = bytes.fromhex('F8B582B00090151C081CFF F7ABF9F7F761FFF7F7A1FF041C281C00F077FB071C4F210098002289004254002C01D1501E474301 2C36D04F21009889004754002001900198810018484058810000984018456A002D21D0281C002407F0E5FB00281BDD281C211C07F067FC061C9E210022 04F05AFB0004000CC21900 2A00DC0122301C9E2104F062FB301C05F059FA281C641C07F0C9FB8442E3DB019840 1C019002 28CED302B0F8BD68000902'.replace(' ',''))
+                _w2_patch = bytes.fromhex('F8B582B00090151C081CFF F7ABF9F7F761FFF7F7A1FF041C281C00F08DFB071C4F210098002289004254002C01D1501E474301 2C36D04F21009889004754002001900198810018484058810000984018456A002D21D0281C002407F0FBFB00281BDD281C211C07F07DFC061C9E210022 04F070FB0004000CC21900 2A00DC0122301C9E2104F078FB301C05F06FFA281C641C07F0DFFB8442E3DB019840 1C019002 28CED302B0F8BD94000902'.replace(' ',''))
                 _byte28 = arm9_data[_BW2_PATCH_OFFSET + 28]
-                if _byte28 == 0x77:    # Black 2
-                    arm9_data[_BW2_PATCH_OFFSET:_BW2_PATCH_OFFSET + _BW2_PATCH_LEN] = _b2_patch
-                elif _byte28 == 0x8D:  # White 2
-                    arm9_data[_BW2_PATCH_OFFSET:_BW2_PATCH_OFFSET + _BW2_PATCH_LEN] = _w2_patch
+                _patch = _b2_patch if _byte28 == 0x77 else _w2_patch if _byte28 == 0x8D else None
+                if _patch:
+                    arm9_data[_BW2_PATCH_OFFSET:_BW2_PATCH_OFFSET + _BW2_PATCH_LEN] = _patch
+                    rom.arm9 = bytes(arm9_data)
+                    rom.saveToFile(path)
+                    rom = ndspy.rom.NintendoDSRom.fromFile(path)
+                    raw_arm9 = bytes(rom.arm9)
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                            tmp.write(raw_arm9)
+                            tmp_path = tmp.name
+                        decompress_arm9(tmp_path)
+                        with open(tmp_path, 'rb') as f:
+                            arm9_data = bytearray(f.read())
+                        Path(tmp_path).unlink(missing_ok=True)
+                    except Exception:
+                        arm9_data = bytearray(raw_arm9)
 
         arm7_data = bytearray(rom.arm7)
 
